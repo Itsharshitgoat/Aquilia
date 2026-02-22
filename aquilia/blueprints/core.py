@@ -24,6 +24,8 @@ from typing import (
     TYPE_CHECKING,
 )
 
+from ..utils.data import DataObject
+
 from .facets import Facet, UNSET, derive_facet, Computed, Constant, ReadOnly, Inject
 from .lenses import Lens, _ProjectedRef
 from .projections import ProjectionRegistry
@@ -370,6 +372,19 @@ class Blueprint(metaclass=BlueprintMeta):
             bound.bind(fname, self)
             self._bound_facets[fname] = bound
 
+    def __getattr__(self, name: str) -> Any:
+        """Proxy attribute access to validated_data."""
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if self._validated_data is not None:
+            if name in self._validated_data:
+                return self._validated_data[name]
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+    def __getitem__(self, key: str) -> Any:
+        """Proxy dictionary-style access to validated_data."""
+        return self.validated_data[key]
+
     # ── Outbound: Mold ───────────────────────────────────────────────
 
     @property
@@ -596,7 +611,7 @@ class Blueprint(metaclass=BlueprintMeta):
                 raise SealFault(message="Blueprint validation failed", errors=self._errors)
             return False
 
-        self._validated_data = validated
+        self._validated_data = DataObject(validated)
         self._is_sealed = True
         return True
 

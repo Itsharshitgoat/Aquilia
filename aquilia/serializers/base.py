@@ -50,6 +50,8 @@ from typing import (
     Union,
 )
 
+from ..utils.data import DataObject
+
 # ============================================================================
 # Serialization Plan — precomputed per-class for O(1) field iteration
 # ============================================================================
@@ -572,6 +574,8 @@ class Serializer(SerializerField, metaclass=SerializerMeta):
         self._errors = {}
         try:
             self._validated_data = self.run_validation(self.initial_data)
+            # Wrap in DataObject for recursive dot-access support
+            self._validated_data = DataObject(self._validated_data)
         except ValidationFault as exc:
             self._errors = exc.errors
             self._validated_data = empty
@@ -729,7 +733,7 @@ class Serializer(SerializerField, metaclass=SerializerMeta):
 
         if errors:
             raise ValidationFault(errors=errors)
-        return value
+        return DataObject(value)
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         """
@@ -864,6 +868,13 @@ class Serializer(SerializerField, metaclass=SerializerMeta):
                 return self._validated_data[name]
                 
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+    def __getitem__(self, key: str) -> Any:
+        """
+        Proxy dictionary-style access to validated_data.
+        Allows the serializer to be used where a dict is expected.
+        """
+        return self.validated_data[key]
 
     # ── Representation ───────────────────────────────────────────────────
 
