@@ -66,7 +66,8 @@ class TestLoginForm:
         """LOGIN-002: Form login redirects to /auth/dashboard."""
         email = _unique_email("form")
         await client.post("/auth/register", json={
-            "email": email, "password": "Str0ngP@ss!", "full_name": "Form",
+            "email": email, "password": "Str0ngP@ss!", "username": "form_tester",
+            "name": {"first_name": "Form", "last_name": "Tester"},
         })
 
         resp = await client.post("/auth/login", data={
@@ -85,7 +86,8 @@ class TestLoginInvalidCredentials:
         """LOGIN-003: Wrong password returns error."""
         email = _unique_email("wrongpw")
         await client.post("/auth/register", json={
-            "email": email, "password": "Str0ngP@ss!", "full_name": "Wrong PW",
+            "email": email, "password": "Str0ngP@ss!", "username": "wrongpw_tester",
+            "name": {"first_name": "Wrong", "last_name": "PW"},
         })
 
         resp = await client.post("/auth/login", json={

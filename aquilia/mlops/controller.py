@@ -12,8 +12,8 @@ Ecosystem wiring:
   introspection results are cached with namespace isolation.
 - **Effects** — controller methods declare ``CacheEffect`` / ``DBTx`` so
   the effect middleware can acquire and release resources automatically.
-- **Serializers** — request/response payloads are validated through the
-  Aquilia serializer framework.
+- **Blueprints** — request/response payloads are validated through the
+  Aquilia blueprint framework.
 
 Endpoints::
 

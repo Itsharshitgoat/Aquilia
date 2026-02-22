@@ -357,9 +357,6 @@ def _extract_method_params(
             # Determine source
             if param_name in path_params:
                 source = 'path'
-            elif _is_serializer_type(param_type):
-                # Serializer subclass → auto-parse request body (FastAPI-style)
-                source = 'body'
             elif _is_blueprint_type(param_type):
                 # Blueprint subclass → auto-parse request body
                 source = 'body'
@@ -412,24 +409,6 @@ def _extract_method_params(
     
     return params
 
-
-def _is_serializer_type(annotation: Any) -> bool:
-    """
-    Check if a type annotation is an Aquilia Serializer subclass.
-
-    Used by the metadata extractor to auto-detect handler parameters
-    that should be populated from the request body — similar to how
-    FastAPI detects Pydantic BaseModel subclasses.
-    """
-    try:
-        from aquilia.serializers.base import Serializer
-        return (
-            isinstance(annotation, type)
-            and issubclass(annotation, Serializer)
-            and annotation is not Serializer
-        )
-    except ImportError:
-        return False
 
 
 def _is_blueprint_type(annotation: Any) -> bool:
