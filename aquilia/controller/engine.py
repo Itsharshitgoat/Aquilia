@@ -544,10 +544,12 @@ class ControllerEngine:
                 )
                 bp_instance.is_sealed(raise_fault=True)
 
-                # If param name suggests they want the Blueprint instance,
-                # inject the full Blueprint. Otherwise inject validated_data.
+                # Inject the FULL Blueprint instance if:
+                # 1. The parameter is explicitly typed as a Blueprint subclass
+                # 2. The parameter name suggests it wants the instance
                 inject_instance = (
-                    param_name == "blueprint"
+                    param_is_blueprint
+                    or param_name == "blueprint"
                     or param_name.endswith("_blueprint")
                     or param_name.endswith("_bp")
                 )
@@ -575,11 +577,12 @@ class ControllerEngine:
                 )
                 serializer.is_valid(raise_fault=True)
                 
-                # If param name suggests they want the serializer instance,
-                # inject the full serializer (access to .save(), .errors, etc.)
-                # Otherwise inject just the validated_data dict.
+                # Inject the FULL serializer instance if:
+                # 1. The parameter is explicitly typed as a Serializer subclass
+                # 2. The parameter name suggests it wants the instance
                 inject_instance = (
-                    param_name == "serializer"
+                    param_is_serializer
+                    or param_name == "serializer"
                     or param_name.endswith("_serializer")
                     or param_name.endswith("_ser")
                 )
