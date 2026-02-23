@@ -1,6 +1,6 @@
 """
-Migration: 20260222_084848_usersmodel
-Generated: 2026-02-22T08:48:48.371847+00:00
+Migration: 20260222_193006_usersmodel
+Generated: 2026-02-22T19:30:06.366826+00:00
 Models: UsersModel
 """
 
@@ -11,7 +11,7 @@ from aquilia.models.migration_dsl import (
 
 
 class Meta:
-    revision = "20260222_084848"
+    revision = "20260222_193006"
     slug = "usersmodel"
     models = ['UsersModel']
 

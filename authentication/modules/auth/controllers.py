@@ -8,7 +8,9 @@ using the modern Controller architecture with pattern-based routing.
 from aquilia import Controller, GET, POST, PUT, DELETE, RequestCtx, Response
 from .faults import AuthNotFoundFault
 from .services import AuthService
-from .serializer import RegisterInputModel, UserOutputModel
+
+
+from .blueprints import RegisterInputBlueprint, UserOutputBlueprint, LoginInputBlueprint
 
 
 class AuthController(Controller):
@@ -22,8 +24,13 @@ class AuthController(Controller):
     async def list_auth(self, name: str):
         return Response.json({"name": name })
 
-    @POST("/")
-    async def create_auth(self, ctx: RequestCtx, data: RegisterInputModel):
-        user = await self.service.register(data = data)
-        return Response.json(UserOutputModel(instance = user).data, status = 201)
+    @POST("/register")
+    async def create_auth(self, ctx: RequestCtx, data: RegisterInputBlueprint):
+        user = await self.service.register(data=data)
+        return Response.json(UserOutputBlueprint(instance=user).data, status=201)
+
+    @POST("/login")
+    async def login(self, ctx: RequestCtx, data: LoginInputBlueprint):
+        resp = await self.service.login(data.email, data.password)
+        return Response.json(resp, status=200)
  
