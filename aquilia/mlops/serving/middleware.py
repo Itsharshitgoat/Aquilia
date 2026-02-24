@@ -197,10 +197,9 @@ def mlops_rate_limit_middleware(
             from aquilia.response import Response
             wait_time = rate_limiter.acquire_wait_time()
 
-            # Emit through FaultEngine if available
             if fault_engine is not None:
                 try:
-                    from .faults import RateLimitFault
+                    from ..engine.faults import RateLimitFault
                     await fault_engine.process(
                         RateLimitFault(limit_rps=rate_limiter.rate, retry_after=wait_time),
                         app="mlops",
@@ -253,7 +252,7 @@ def mlops_circuit_breaker_middleware(
             # Emit through FaultEngine
             if fault_engine is not None:
                 try:
-                    from .faults import CircuitBreakerOpenFault
+                    from ..engine.faults import CircuitBreakerOpenFault
                     await fault_engine.process(
                         CircuitBreakerOpenFault(
                             failure_count=circuit_breaker.failure_count

@@ -54,7 +54,7 @@ async def mlops_on_startup(
     # 1. Register DI providers if container available
     if di_container is not None:
         try:
-            from .di_providers import register_mlops_providers
+            from ..di.providers import register_mlops_providers
 
             # Flatten nested config into DI-friendly dict
             flat_config = _flatten_mlops_config(cfg)
@@ -67,7 +67,7 @@ async def mlops_on_startup(
     try:
         registry_cfg = cfg.get("registry", {})
         if registry_cfg.get("db_path"):
-            from .registry.service import RegistryService
+            from ..registry.service import RegistryService
 
             registry = RegistryService(
                 db_path=registry_cfg.get("db_path", "registry.db"),
@@ -82,7 +82,7 @@ async def mlops_on_startup(
     try:
         plugins_cfg = cfg.get("plugins", {})
         if plugins_cfg.get("auto_discover", True):
-            from .plugins.host import PluginHost
+            from ..plugins.host import PluginHost
 
             host = PluginHost()
             found = host.discover_entrypoints()
@@ -119,7 +119,7 @@ async def mlops_on_startup(
     try:
         if di_container is not None and hasattr(di_container, "resolve_async"):
             from aquilia.faults import FaultEngine
-            from .observe.metrics import MetricsCollector
+            from ..observe.metrics import MetricsCollector
 
             fault_engine = await di_container.resolve_async(FaultEngine, optional=True)
             metrics = await di_container.resolve_async(MetricsCollector, optional=True)
@@ -174,7 +174,7 @@ async def mlops_on_shutdown(
     # 1. Stop circuit breaker (reject new requests)
     try:
         if di_container is not None and hasattr(di_container, "resolve"):
-            from ._structures import CircuitBreaker
+            from .._structures import CircuitBreaker
 
             cb = di_container.resolve(CircuitBreaker)
             if cb:
@@ -183,10 +183,9 @@ async def mlops_on_shutdown(
     except Exception as exc:
         logger.debug("  Circuit breaker shutdown: %s", exc)
 
-    # 2. Flush metrics before unloading models
     try:
         if di_container is not None and hasattr(di_container, "resolve"):
-            from .observe.metrics import MetricsCollector
+            from ..observe.metrics import MetricsCollector
 
             metrics = di_container.resolve(MetricsCollector)
             if metrics:
@@ -202,7 +201,7 @@ async def mlops_on_shutdown(
     # 3. Gracefully unload models / release GPU memory
     try:
         if di_container is not None and hasattr(di_container, "resolve"):
-            from .serving.server import ModelServingServer
+            from ..serving.server import ModelServingServer
 
             server = di_container.resolve(ModelServingServer)
             if server and hasattr(server, "_runtime") and server._runtime is not None:
@@ -223,10 +222,9 @@ async def mlops_on_shutdown(
     except Exception as exc:
         logger.debug("  Model unload: %s", exc)
 
-    # 4. Deactivate plugins
     try:
         if di_container is not None and hasattr(di_container, "resolve"):
-            from .plugins.host import PluginHost
+            from ..plugins.host import PluginHost
 
             host = di_container.resolve(PluginHost)
             if host:
@@ -247,10 +245,9 @@ async def mlops_on_shutdown(
     except Exception as exc:
         logger.debug("  CacheService shutdown: %s", exc)
 
-    # 6. Close registry
     try:
         if di_container is not None and hasattr(di_container, "resolve"):
-            from .registry.service import RegistryService
+            from ..registry.service import RegistryService
 
             registry = di_container.resolve(RegistryService)
             if registry:

@@ -40,7 +40,7 @@ from .._structures import (
     MemoryTracker,
     TokenBucketRateLimiter,
 )
-from ..faults import InferenceFault, RuntimeLoadFault
+from ..engine.faults import InferenceFault, RuntimeLoadFault
 from ..runtime.base import BaseRuntime, select_runtime
 from .batching import DynamicBatcher
 

@@ -35,7 +35,7 @@ from aquilia.blueprints import (
     ReadOnly,
 )
 
-from ._types import (
+from .._types import (
     Framework,
     RuntimeKind,
     BatchingStrategy,

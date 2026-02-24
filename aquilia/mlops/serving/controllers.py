@@ -201,7 +201,7 @@ class MLOpsController(Controller):
               "stream": false
             }
         """
-        from ._types import InferenceRequest
+        from .._types import InferenceRequest
 
         if not self._server:
             return {"error": "No serving server configured", "status": 503}
@@ -423,7 +423,7 @@ class MLOpsController(Controller):
               "auto_rollback": true
             }
         """
-        from ._types import RolloutConfig, RolloutStrategy
+        from .._types import RolloutConfig, RolloutStrategy
 
         if not self._rollout:
             return {"error": "Rollout engine not configured"}

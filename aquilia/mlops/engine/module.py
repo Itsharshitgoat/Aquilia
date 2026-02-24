@@ -42,9 +42,8 @@ class MLOpsManifest:
     description = "Aquilia MLOps Platform — model packaging, registry, serving & observability"
     depends_on: List[str] = []
 
-    # Controller import paths (lazy-loaded by Aquilary)
     controllers: List[str] = [
-        "aquilia.mlops.controller.MLOpsController",
+        "aquilia.mlops.serving.controllers.MLOpsController",
     ]
 
     # Service import paths (wired into DI)
@@ -92,19 +91,19 @@ class MLOpsManifest:
 
     # Middleware (registered in order via MiddlewareDescriptor)
     middleware: List[tuple[str, dict]] = [
-        ("aquilia.mlops.middleware.mlops_request_id_middleware", {"scope": "app:mlops", "priority": 5}),
-        ("aquilia.mlops.middleware.mlops_rate_limit_middleware", {"scope": "app:mlops", "priority": 10}),
-        ("aquilia.mlops.middleware.mlops_circuit_breaker_middleware", {"scope": "app:mlops", "priority": 20}),
-        ("aquilia.mlops.middleware.mlops_metrics_middleware", {"scope": "app:mlops", "priority": 30}),
+        ("aquilia.mlops.serving.middleware.mlops_request_id_middleware", {"scope": "app:mlops", "priority": 5}),
+        ("aquilia.mlops.serving.middleware.mlops_rate_limit_middleware", {"scope": "app:mlops", "priority": 10}),
+        ("aquilia.mlops.serving.middleware.mlops_circuit_breaker_middleware", {"scope": "app:mlops", "priority": 20}),
+        ("aquilia.mlops.serving.middleware.mlops_metrics_middleware", {"scope": "app:mlops", "priority": 30}),
     ]
 
     # Lifecycle hooks
     @staticmethod
     async def on_startup(config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
-        from .lifecycle_hooks import mlops_on_startup
+        from .lifecycle import mlops_on_startup
         await mlops_on_startup(config=config, **kwargs)
 
     @staticmethod
     async def on_shutdown(**kwargs: Any) -> None:
-        from .lifecycle_hooks import mlops_on_shutdown
+        from .lifecycle import mlops_on_shutdown
         await mlops_on_shutdown(**kwargs)

@@ -20,7 +20,7 @@ Usage in ``aquilia.py``::
 
 Or manual DI wiring::
 
-    from aquilia.mlops.di_providers import register_mlops_providers
+    from aquilia.mlops.di.providers import register_mlops_providers
     register_mlops_providers(container, config)
 """
 
@@ -152,27 +152,27 @@ def register_mlops_providers(
     - ``CacheService`` — caching layer (resolve from container or skip)
     - ``FilesystemArtifactStore`` — artifact storage (singleton)
     """
-    from .observe.metrics import MetricsCollector
-    from .observe.drift import DriftDetector
-    from .observe.logger import PredictionLogger
-    from .registry.service import RegistryService
-    from .plugins.host import PluginHost
-    from .serving.router import TrafficRouter
-    from .release.rollout import RolloutEngine
-    from .scheduler.autoscaler import Autoscaler, ScalingPolicy
-    from .scheduler.placement import PlacementScheduler
-    from .security.rbac import RBACManager
-    from .security.signing import ArtifactSigner, EncryptionManager
-    from .security.encryption import BlobEncryptor
-    from ._types import DriftMethod, BatchingStrategy
-    from ._structures import (
+    from ..observe.metrics import MetricsCollector
+    from ..observe.drift import DriftDetector
+    from ..observe.logger import PredictionLogger
+    from ..registry.service import RegistryService
+    from ..plugins.host import PluginHost
+    from ..serving.router import TrafficRouter
+    from ..release.rollout import RolloutEngine
+    from ..scheduler.autoscaler import Autoscaler, ScalingPolicy
+    from ..scheduler.placement import PlacementScheduler
+    from ..security.rbac import RBACManager
+    from ..security.signing import ArtifactSigner, EncryptionManager
+    from ..security.encryption import BlobEncryptor
+    from .._types import DriftMethod, BatchingStrategy
+    from .._structures import (
         CircuitBreaker,
         ExperimentLedger,
         MemoryTracker,
         ModelLineageDAG,
         TokenBucketRateLimiter,
     )
-    from .controller import MLOpsController
+    from .controllers import MLOpsController
 
     cfg = MLOpsConfig(config)
 
@@ -379,7 +379,7 @@ def register_mlops_providers(
             ))
 
         # Register MLOps-specific fault handler
-        from .faults import MLOpsFault
+        from ..engine.faults import MLOpsFault
         from aquilia.faults.handlers import FaultHandler
         from aquilia.faults.core import FaultContext, Escalate
 

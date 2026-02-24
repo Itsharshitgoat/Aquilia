@@ -49,6 +49,15 @@ workspace = (
             "modules.auth.services:AuthService"
         ))
 
+    .module(Module("ml", version="0.1.0", description="Machine Learning module")
+        .route_prefix("/ml")
+        .register_controllers(
+            "aquilia.mlops.serving.controllers.MLOpsController"
+        )
+        .register_providers(
+            "aquilia.mlops.di.providers:register_mlops_providers"
+        ))
+
     # Integrations - Configure core systems
     .integrate(Integration.auth(secret_key="production-grade-secret-key"))
     .integrate(Integration.di(auto_wire=True, manifest_validation=True))
@@ -65,6 +74,9 @@ workspace = (
         default_strategy="propagate",
         metrics_enabled=True,
     ))
+    # MLOps Integration (Lifecycle & DI wiring)
+    .on_startup("aquilia.mlops.engine.lifecycle:mlops_on_startup")
+    .on_shutdown("aquilia.mlops.engine.lifecycle:mlops_on_shutdown")
     .integrate(Integration.patterns())
 
     # Templates - Fluent configuration
