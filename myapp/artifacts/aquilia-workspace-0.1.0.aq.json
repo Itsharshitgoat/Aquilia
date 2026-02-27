@@ -1,0 +1,35 @@
+{
+  "__format__": "aquilia-artifact",
+  "schema_version": "1.0",
+  "kind": "workspace",
+  "name": "aquilia-workspace",
+  "version": "0.1.0",
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "4dd91f7a99d61e78fbcfc6b2865700180ac157535bff423027487d3446a524e7"
+  },
+  "provenance": {
+    "created_at": "2026-02-27T17:03:12.292097+00:00",
+    "created_by": "kuroyami",
+    "git_sha": "208fdb4",
+    "source_path": "workspace.py",
+    "hostname": "Pawans-MacBook-Air.local",
+    "build_tool": "aquilia"
+  },
+  "metadata": {},
+  "tags": {
+    "artifact_type": "workspace"
+  },
+  "payload": {
+    "type": "workspace_metadata",
+    "name": "aquilia-workspace",
+    "version": "0.1.0",
+    "description": "myapp workspace",
+    "modules": [
+      "auth",
+      "users"
+    ],
+    "runtime": {},
+    "integrations": {}
+  }
+}

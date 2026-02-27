@@ -1,0 +1,11 @@
+{
+  "fingerprint": "1b891edc6d2dde292cb1f11a50688a636a3004f59bdb9c388d2430481366afba",
+  "artifacts": [
+    "/Users/kuroyami/PyProjects/Aquilia/myapp/artifacts/aquilia.crous",
+    "/Users/kuroyami/PyProjects/Aquilia/myapp/artifacts/auth.crous",
+    "/Users/kuroyami/PyProjects/Aquilia/myapp/artifacts/di.crous",
+    "/Users/kuroyami/PyProjects/Aquilia/myapp/artifacts/registry.crous",
+    "/Users/kuroyami/PyProjects/Aquilia/myapp/artifacts/routes.crous"
+  ],
+  "signed": false
+}

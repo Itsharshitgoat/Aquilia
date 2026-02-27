@@ -824,7 +824,19 @@ class ComposeGenerator:
         self.ctx = ctx
 
     def generate_compose(self, *, include_monitoring: bool = False) -> str:
-        """Generate docker-compose.yml."""
+        """Generate docker-compose.yml.
+
+        Produces a *lean* compose file by default — only the app service
+        plus infrastructure that the workspace actually uses (DB, Redis).
+        Nginx, monitoring, MLOps, and mail services are only included
+        when the workspace introspection detects them, or when explicitly
+        requested via ``include_monitoring``.
+
+        Services behind Docker Compose *profiles* are opt-in:
+          docker compose --profile monitoring up -d
+          docker compose --profile mlops up -d
+          docker compose --profile dev up -d
+        """
         name = self.ctx["name"]
         port = self.ctx.get("port", 8000)
         workers = self.ctx.get("workers", 4)
@@ -862,7 +874,6 @@ class ComposeGenerator:
             svc_list.append("#   db         — MySQL database")
         if needs_redis:
             svc_list.append("#   redis      — Redis (sessions/cache/rate-limit)")
-        svc_list.append("#   nginx      — Reverse proxy")
         if has_migrations:
             svc_list.append("#   migrate    — Database migration runner (run-once)")
         if has_mlops:
@@ -872,6 +883,7 @@ class ComposeGenerator:
             svc_list.append("#   grafana    — Metrics dashboard       [profile: monitoring]")
         if has_mail:
             svc_list.append("#   mailhog    — Dev mail catcher        [profile: dev]")
+        svc_list.append("#   nginx      — Reverse proxy             [profile: proxy]")
 
         svc_block = "\n".join(svc_list)
 
@@ -1017,12 +1029,14 @@ class ComposeGenerator:
                 "",
             ])
 
-        # ── Nginx ──
+        # ── Nginx (opt-in via `docker compose --profile proxy up`) ──
         compose_lines.extend([
-            f"  # ── Nginx Reverse Proxy ──",
+            f"  # ── Nginx Reverse Proxy (enable with --profile proxy) ──",
             f"  nginx:",
             f"    image: nginx:alpine",
             f"    container_name: {name}-nginx",
+            f"    profiles:",
+            f"      - proxy",
             f"    restart: unless-stopped",
             f"    ports:",
             f'      - "80:80"',

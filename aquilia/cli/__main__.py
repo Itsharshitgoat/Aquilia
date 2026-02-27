@@ -181,9 +181,10 @@ def add():
 @click.option('--fault-domain', type=str, help='Custom fault domain')
 @click.option('--route-prefix', type=str, help='Route prefix (default: /name)')
 @click.option('--with-tests', is_flag=True, help='Generate test routes')
+@click.option('--minimal', is_flag=True, help='Generate minimal module (controller + manifest only)')
 @click.option('--no-docker', is_flag=True, help='Skip auto-generating Docker files')
 @click.pass_context
-def add_module(ctx, name: str, depends_on: tuple, fault_domain: Optional[str], route_prefix: Optional[str], with_tests: bool, no_docker: bool):
+def add_module(ctx, name: str, depends_on: tuple, fault_domain: Optional[str], route_prefix: Optional[str], with_tests: bool, minimal: bool, no_docker: bool):
     """
     Add a new module to the workspace.
     
@@ -192,6 +193,7 @@ def add_module(ctx, name: str, depends_on: tuple, fault_domain: Optional[str], r
     
     Examples:
       aq add module users
+      aq add module users --minimal
       aq add module products --depends-on=users
       aq add module admin --fault-domain=ADMIN --route-prefix=/api/admin
       aq add module test --with-tests
@@ -206,6 +208,8 @@ def add_module(ctx, name: str, depends_on: tuple, fault_domain: Optional[str], r
             fault_domain=fault_domain,
             route_prefix=route_prefix,
             with_tests=with_tests,
+            minimal=minimal,
+            no_docker=no_docker,
             verbose=ctx.obj['verbose'],
         )
         
@@ -216,12 +220,11 @@ def add_module(ctx, name: str, depends_on: tuple, fault_domain: Optional[str], r
             if depends_on:
                 kv("Dependencies", ", ".join(depends_on))
             click.echo()
-            next_steps([
-                f"Implement controllers in modules/{name}/controllers.py",
-                f"Implement services in modules/{name}/services.py",
-                "Run: aq run",
-                "Deploy: aq deploy all",
-            ])
+            steps = [f"Implement controllers in modules/{name}/controllers.py"]
+            if not minimal:
+                steps.append(f"Implement services in modules/{name}/services.py")
+            steps.extend(["Run: aq run", "Deploy: aq deploy all"])
+            next_steps(steps)
     
     except Exception as e:
         error(f"  {_CROSS} Failed to add module: {e}")
@@ -317,11 +320,22 @@ def validate(ctx, strict: bool, module: Optional[str]):
                 kv("Modules", str(result.module_count))
                 kv("Routes", str(result.route_count))
                 kv("DI providers", str(result.provider_count))
+                if result.fingerprint:
+                    kv("Fingerprint", str(result.fingerprint)[:24])
+                # Show warnings even when valid
+                if hasattr(result, 'warnings') and result.warnings:
+                    click.echo()
+                    for w in result.warnings:
+                        bullet(w, fg="yellow")
             else:
                 error(f"  {_CROSS} Validation failed")
                 click.echo()
                 for fault in result.faults:
                     bullet(fault, fg="red")
+                if hasattr(result, 'warnings') and result.warnings:
+                    click.echo()
+                    for w in result.warnings:
+                        bullet(w, fg="yellow")
                 sys.exit(1)
     
     except Exception as e:
@@ -614,20 +628,31 @@ def migrate(ctx, source: str, dry_run: bool):
 @cli.command('doctor')
 @click.pass_context
 def doctor(ctx):
-    """Diagnose workspace issues."""
+    """Diagnose workspace issues.
+
+    Performs comprehensive health checks across all layers:
+    environment, workspace structure, manifests, Aquilary pipeline,
+    integrations, and deployment readiness.
+    """
     from .commands.doctor import diagnose_workspace
-    
+
     try:
         issues = diagnose_workspace(verbose=ctx.obj['verbose'])
-        
+
         click.echo()
         if not issues:
-            success(f"  {_CHECK} No issues found")
+            success(f"  {_CHECK} Workspace is healthy — no issues found")
         else:
             warning(f"  Found {len(issues)} issue(s):")
             for issue in issues:
                 bullet(issue, fg="yellow")
-    
+            click.echo()
+            next_steps([
+                "Fix the issues above",
+                "Run: aq doctor -v  (verbose details)",
+                "Run: aq validate --strict  (full pipeline check)",
+            ])
+
     except Exception as e:
         error(f"  {_CROSS} Diagnosis failed: {e}")
         sys.exit(1)
@@ -684,6 +709,42 @@ def ws_gen_client(ctx, lang: str, out: str, artifacts_dir: str):
         cmd_ws_gen_client({'lang': lang, 'out': out, 'artifacts_dir': artifacts_dir})
     except Exception as e:
         error(f"  {_CROSS} WS gen-client failed: {e}")
+        sys.exit(1)
+
+
+@ws.command('purge-room')
+@click.option('--namespace', required=True, help='Namespace')
+@click.option('--room', required=True, help='Room to purge')
+@click.option('--redis-url', default=None, help='Redis URL (optional)')
+@click.pass_context
+def ws_purge_room(ctx, namespace: str, room: str, redis_url: Optional[str]):
+    """Purge a room's state from the adapter.
+
+    Examples:\n      aq ws purge-room --namespace /chat --room room1
+    """
+    from .commands.ws import cmd_ws_purge_room
+    try:
+        cmd_ws_purge_room({'namespace': namespace, 'room': room, 'redis_url': redis_url})
+    except Exception as e:
+        error(f"  {_CROSS} WS purge-room failed: {e}")
+        sys.exit(1)
+
+
+@ws.command('kick')
+@click.option('--conn', required=True, help='Connection ID to disconnect')
+@click.option('--reason', default='kicked by admin', help='Reason for kick')
+@click.option('--redis-url', default=None, help='Redis URL (optional)')
+@click.pass_context
+def ws_kick(ctx, conn: str, reason: str, redis_url: Optional[str]):
+    """Kick (disconnect) a WebSocket connection.
+
+    Examples:\n      aq ws kick --conn abc-123 --reason "violated rules"
+    """
+    from .commands.ws import cmd_ws_kick
+    try:
+        cmd_ws_kick({'conn': conn, 'reason': reason, 'redis_url': redis_url})
+    except Exception as e:
+        error(f"  {_CROSS} WS kick failed: {e}")
         sys.exit(1)
 
 
@@ -1158,6 +1219,8 @@ from .commands.mlops_cmds import (
     observe_group,
     export_group,
     plugin_group,
+    lineage_group,
+    experiment_group,
 )
 
 cli.add_command(pack_group)
@@ -1166,6 +1229,8 @@ cli.add_command(deploy_group)
 cli.add_command(observe_group)
 cli.add_command(export_group)
 cli.add_command(plugin_group)
+cli.add_command(lineage_group)
+cli.add_command(experiment_group)
 
 
 # ============================================================================
