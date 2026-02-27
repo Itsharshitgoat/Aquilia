@@ -164,6 +164,10 @@ def register_mlops_providers(
     from ..security.rbac import RBACManager
     from ..security.signing import ArtifactSigner, EncryptionManager
     from ..security.encryption import BlobEncryptor
+    from ..orchestrator.orchestrator import ModelOrchestrator
+    from ..orchestrator.persistence import ModelPersistenceManager
+    from ..orchestrator.loader import ModelLoader
+    from ..serving.router import TrafficRouter
     from .._types import DriftMethod, BatchingStrategy
     from .._structures import (
         CircuitBreaker,
@@ -172,7 +176,7 @@ def register_mlops_providers(
         ModelLineageDAG,
         TokenBucketRateLimiter,
     )
-    from .controllers import MLOpsController
+    from ..serving.controllers import MLOpsController
 
     cfg = MLOpsConfig(config)
 
@@ -229,6 +233,25 @@ def register_mlops_providers(
         scope="singleton",
     ))
 
+    # Model Persistence Manager
+    persistence = ModelPersistenceManager(root_dir=cfg.blob_root)
+    container.register(ValueProvider(
+        value=persistence,
+        token=ModelPersistenceManager,
+        scope="singleton",
+    ))
+
+    # Model Loader
+    loader = ModelLoader(
+        registry=registry,
+        persistence_manager=persistence,
+    )
+    container.register(ValueProvider(
+        value=loader,
+        token=ModelLoader,
+        scope="singleton",
+    ))
+
     # Plugin Host
     host = PluginHost()
     if cfg.plugin_auto_discover:
@@ -244,6 +267,18 @@ def register_mlops_providers(
     container.register(ValueProvider(
         value=router,
         token=TrafficRouter,
+        scope="singleton",
+    ))
+
+    # Model Orchestrator
+    orchestrator = ModelOrchestrator(
+        registry=registry,
+        router=router,
+        loader=loader,
+    )
+    container.register(ValueProvider(
+        value=orchestrator,
+        token=ModelOrchestrator,
         scope="singleton",
     ))
 

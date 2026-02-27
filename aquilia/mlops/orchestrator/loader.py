@@ -25,10 +25,11 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..runtime.base import ModelState
+from ..runtime.base import BaseRuntime, ModelState
 from ..engine.hooks import HookRegistry, collect_hooks
 from ..engine.pipeline import InferencePipeline
 from .registry import ModelEntry, ModelRegistry
+from .persistence import ModelPersistenceManager
 
 logger = logging.getLogger("aquilia.mlops.orchestrator.loader")
 
@@ -74,16 +75,21 @@ class ModelLoader:
     def __init__(
         self,
         registry: ModelRegistry,
+        persistence_manager: Optional[ModelPersistenceManager] = None,
         device_manager: Any = None,
         executor: Any = None,
         metrics_collector: Any = None,
+        memory_tracker: Any = None,
     ) -> None:
         self._registry = registry
+        self._persistence = persistence_manager
         self._device_manager = device_manager
         self._executor = executor
         self._metrics = metrics_collector
+        self._memory_tracker = memory_tracker
         self._loaded: Dict[str, LoadedModel] = {}   # "name:version" → LoadedModel
         self._locks: Dict[str, asyncio.Lock] = {}
+        self._last_used: Dict[str, float] = {}      # "name:version" → timestamp
 
     def _get_lock(self, key: str) -> asyncio.Lock:
         """Get or create a per-model lock."""
@@ -99,6 +105,7 @@ class ModelLoader:
 
         If the model is already loaded, returns immediately.
         If not, acquires the model lock and loads it.
+        Applies memory-pressure eviction before loading new models.
 
         Raises:
             KeyError: Model not found in registry.
@@ -109,6 +116,7 @@ class ModelLoader:
         # Fast path — already loaded
         loaded = self._loaded.get(key)
         if loaded and loaded.entry.state == ModelState.LOADED:
+            self._last_used[key] = time.time()
             return loaded
 
         # Slow path — acquire lock and load
@@ -117,13 +125,83 @@ class ModelLoader:
             # Double-check after acquiring lock
             loaded = self._loaded.get(key)
             if loaded and loaded.entry.state == ModelState.LOADED:
+                self._last_used[key] = time.time()
                 return loaded
 
             entry = self._registry.get(name, version)
             if entry is None:
                 raise KeyError(f"Model '{name}:{version}' not found in registry")
 
-            return await self._load_model(entry)
+            # Auto-eviction: if memory tracker is configured and memory
+            # is above soft limit, evict the LRU model before loading
+            await self._maybe_evict()
+
+            loaded = await self._load_model(entry)
+
+            # Warmup: run synthetic requests if configured
+            warmup_n = getattr(entry.config, "warmup_requests", 0)
+            if warmup_n and warmup_n > 0:
+                await self._run_warmup(loaded, warmup_n)
+
+            self._last_used[key] = time.time()
+            return loaded
+
+    async def _maybe_evict(self) -> None:
+        """
+        Evict the least-recently-used model if memory is under pressure.
+
+        Only acts when a ``MemoryTracker`` is configured and the current
+        usage exceeds the soft limit.
+        """
+        if not self._memory_tracker or not self._loaded:
+            return
+
+        stats = self._memory_tracker.stats
+        if stats.get("current_usage_mb", 0) <= stats.get("soft_limit_mb", float("inf")):
+            return
+
+        # Find LRU model
+        if not self._last_used:
+            return
+
+        lru_key = min(self._last_used, key=self._last_used.get)
+        lru_loaded = self._loaded.get(lru_key)
+        if lru_loaded is None:
+            return
+
+        logger.warning(
+            "Memory pressure: evicting LRU model %s (last used %.1fs ago)",
+            lru_key, time.time() - self._last_used.get(lru_key, 0),
+        )
+
+        self._loaded.pop(lru_key, None)
+        self._last_used.pop(lru_key, None)
+        await self._unload_instance(lru_loaded)
+        self._registry.update_state(
+            lru_loaded.entry.name, lru_loaded.entry.version, ModelState.UNLOADED,
+        )
+
+    async def _run_warmup(
+        self, loaded: LoadedModel, n: int,
+    ) -> None:
+        """Run *n* synthetic warmup requests through the loaded pipeline."""
+        from .._types import InferenceRequest
+
+        logger.info("Warming up %s with %d requests...", loaded.entry.key, n)
+        for i in range(n):
+            try:
+                req = InferenceRequest(
+                    request_id=f"warmup-{loaded.entry.key}-{i}",
+                    inputs={"_warmup": True},
+                )
+                await loaded.pipeline.execute(
+                    req,
+                    model_name=loaded.entry.name,
+                    model_version=loaded.entry.version,
+                )
+            except Exception as exc:
+                logger.debug("Warmup request %d failed: %s", i, exc)
+        logger.info("Warmup complete for %s", loaded.entry.key)
 
     async def _load_model(self, entry: ModelEntry) -> LoadedModel:
         """Instantiate and load a model from its registry entry."""
@@ -145,11 +223,25 @@ class ModelLoader:
 
             # Call the model's load method if it exists
             if hasattr(instance, "load") and callable(instance.load):
-                load_fn = instance.load
-                if inspect.iscoroutinefunction(load_fn):
-                    await load_fn(entry.config.artifacts_dir, device)
-                else:
-                    load_fn(entry.config.artifacts_dir, device)
+                # Try to load from persistence first
+                try:
+                    loaded_weights = await self._persistence.load_model(
+                        entry.name, entry.version, device=device
+                    )
+                    # If the load() method expects weights, pass them
+                    # Otherwise, it might be a custom reload logic
+                    load_fn = instance.load
+                    if inspect.iscoroutinefunction(load_fn):
+                        await load_fn(loaded_weights, entry.config.artifacts_dir, device)
+                    else:
+                        load_fn(loaded_weights, entry.config.artifacts_dir, device)
+                except Exception as e:
+                    logger.debug("Persistence load failed, falling back to basic load: %s", e)
+                    load_fn = instance.load
+                    if inspect.iscoroutinefunction(load_fn):
+                        await load_fn(entry.config.artifacts_dir, device)
+                    else:
+                        load_fn(entry.config.artifacts_dir, device)
 
             # Call on_load hooks
             for hook in hooks.on_load:
@@ -332,25 +424,29 @@ class ModelLoader:
 
 # ── Instance Runtime Adapter ─────────────────────────────────────────────
 
-class _InstanceRuntimeAdapter:
+class _InstanceRuntimeAdapter(BaseRuntime):
     """
     Wraps an AquiliaModel instance as a runtime-compatible object.
 
     This adapter allows the InferencePipeline to call infer() on any
-    model instance that has a predict() method.
+    model instance that has a predict() method.  Inherits from
+    :class:`BaseRuntime` so ``isinstance()`` checks succeed and the
+    full FSM + health/metrics surface is available.
     """
 
     def __init__(self, instance: Any) -> None:
+        super().__init__()
         self._instance = instance
+        # Adapter is always already loaded when constructed
         self._state = ModelState.LOADED
 
-    @property
-    def state(self) -> ModelState:
-        return self._state
+    async def prepare(self, manifest: Any = None, model_dir: str = "") -> None:
+        """No-op — adapter instances are already prepared."""
+        pass
 
-    @property
-    def is_loaded(self) -> bool:
-        return self._state == ModelState.LOADED
+    async def load(self) -> None:
+        """No-op — adapter instances are already loaded."""
+        pass
 
     async def preprocess(self, raw_input: Dict[str, Any]) -> Dict[str, Any]:
         if hasattr(self._instance, "preprocess") and callable(self._instance.preprocess):
@@ -410,12 +506,3 @@ class _InstanceRuntimeAdapter:
                 ))
 
         return results
-
-    async def health(self) -> dict:
-        return {"status": self._state.value}
-
-    async def metrics(self) -> dict:
-        return {"state": float(self._state == ModelState.LOADED)}
-
-    async def memory_info(self) -> dict:
-        return {"state": self._state.value}

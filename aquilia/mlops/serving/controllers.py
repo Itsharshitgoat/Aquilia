@@ -26,7 +26,12 @@ Endpoints::
     GET  /mlops/metrics            — Prometheus metrics export
     GET  /mlops/models             — list registered models
     GET  /mlops/models/{name}      — get model details
-    POST /mlops/models/{name}/rollout — start a rollout
+    POST /mlops/models/{name}/load     — load a model into memory
+    POST /mlops/models/{name}/unload   — unload a model from memory
+    POST /mlops/models/{name}/reload   — hot-reload to a new version
+    GET  /mlops/models/{name}/health   — per-model health check
+    GET  /mlops/models/{name}/metrics  — per-model metrics
+    POST /mlops/models/{name}/rollout  — start a rollout
     GET  /mlops/drift              — drift report
     GET  /mlops/plugins            — list loaded plugins
     GET  /mlops/lineage            — model lineage DAG
@@ -82,6 +87,7 @@ class MLOpsController(Controller):
         rbac_manager=None,
         lineage_dag=None,
         experiment_ledger=None,
+        orchestrator=None,
         # ── Aquilia ecosystem services ──
         cache_service=None,
         fault_engine=None,
@@ -96,6 +102,7 @@ class MLOpsController(Controller):
         self._rbac = rbac_manager
         self._lineage = lineage_dag
         self._experiments = experiment_ledger
+        self._orchestrator = orchestrator
         # Aquilia ecosystem
         self._cache = cache_service
         self._fault_engine = fault_engine
@@ -403,6 +410,122 @@ class MLOpsController(Controller):
             result = manifest.to_dict()
             await self._cache_set(cache_key, result, ttl=60, namespace="mlops.registry")
             return result
+        except Exception as exc:
+            return await self._process_fault(exc)
+
+    # ── Model Management ─────────────────────────────────────────────
+
+    @POST("/models/{name}/load")
+    async def load_model(
+        self, name: str, body: Dict[str, Any] = None, ctx: Optional[RequestCtx] = None,
+    ) -> Dict[str, Any]:
+        """
+        Load a model into memory — ``POST /mlops/models/{name}/load``.
+
+        Body (optional)::
+
+            {"version": "v2", "device": "cuda"}
+        """
+        if not self._orchestrator:
+            return {"error": "Orchestrator not configured", "status": 503}
+
+        body = body or {}
+        version = body.get("version", "")
+
+        try:
+            if version:
+                result = await self._orchestrator.reload_model(name, version)
+            else:
+                entry = self._orchestrator._registry.get(name)
+                if entry is None:
+                    return {"error": f"Model '{name}' not found in registry", "status": 404}
+                result = await self._orchestrator.reload_model(name, entry.version)
+
+            # Invalidate cache
+            await self._cache_set(f"models:list:100:0", None, ttl=0, namespace="mlops.registry")
+            return {"model": name, **result, "action": "loaded"}
+        except Exception as exc:
+            return await self._process_fault(exc)
+
+    @POST("/models/{name}/unload")
+    async def unload_model(
+        self, name: str, body: Dict[str, Any] = None, ctx: Optional[RequestCtx] = None,
+    ) -> Dict[str, Any]:
+        """
+        Unload a model from memory — ``POST /mlops/models/{name}/unload``.
+
+        Body (optional)::
+
+            {"version": "v1"}
+        """
+        if not self._orchestrator:
+            return {"error": "Orchestrator not configured", "status": 503}
+
+        body = body or {}
+        version = body.get("version")
+
+        try:
+            success = await self._orchestrator.unload_model(name, version)
+            if success:
+                return {"model": name, "action": "unloaded", "status": "ok"}
+            return {"error": f"Model '{name}' not loaded or not found", "status": 404}
+        except Exception as exc:
+            return await self._process_fault(exc)
+
+    @POST("/models/{name}/reload")
+    async def reload_model(
+        self, name: str, body: Dict[str, Any] = None, ctx: Optional[RequestCtx] = None,
+    ) -> Dict[str, Any]:
+        """
+        Hot-reload a model to a new version — ``POST /mlops/models/{name}/reload``.
+
+        Body::
+
+            {"version": "v2"}
+        """
+        if not self._orchestrator:
+            return {"error": "Orchestrator not configured", "status": 503}
+
+        body = body or {}
+        version = body.get("version", "")
+        if not version:
+            return {"error": "Missing 'version' in request body", "status": 400}
+
+        try:
+            result = await self._orchestrator.reload_model(name, version)
+            # Invalidate cache
+            await self._cache_set(f"model:{name}:{version}", None, ttl=0, namespace="mlops.registry")
+            return {"model": name, **result, "action": "reloaded"}
+        except Exception as exc:
+            return await self._process_fault(exc)
+
+    @GET("/models/{name}/health")
+    async def model_health(
+        self, name: str, ctx: Optional[RequestCtx] = None,
+    ) -> Dict[str, Any]:
+        """
+        Health check for a specific model — ``GET /mlops/models/{name}/health``.
+        """
+        if not self._orchestrator:
+            return {"error": "Orchestrator not configured", "status": 503}
+
+        try:
+            return await self._orchestrator.get_health(name)
+        except Exception as exc:
+            return await self._process_fault(exc)
+
+    @GET("/models/{name}/metrics")
+    async def model_metrics(
+        self, name: str, ctx: Optional[RequestCtx] = None,
+    ) -> Dict[str, Any]:
+        """
+        Metrics for a specific model — ``GET /mlops/models/{name}/metrics``.
+        """
+        if not self._orchestrator:
+            return {"error": "Orchestrator not configured", "status": 503}
+
+        try:
+            return await self._orchestrator.get_metrics(name)
         except Exception as exc:
             return await self._process_fault(exc)
 

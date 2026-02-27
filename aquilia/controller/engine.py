@@ -536,12 +536,32 @@ class ControllerEngine:
             elif param.source == "body":
                 if request.method in ("POST", "PUT", "PATCH"):
                     try:
-                        body = await request.json()
-                        if param_name in body:
+                        body = await _get_body()
+                        # If the parameter type is a plain dict (Dict[str, Any]) or
+                        # the body itself is not a dict, inject the whole body.
+                        # Otherwise, if the body contains a key matching param_name,
+                        # extract that field (legacy behaviour for named body fields).
+                        from typing import get_origin as _go
+                        import typing as _t
+                        _raw_type = param.type
+                        # Unwrap Optional[Dict] → Dict
+                        try:
+                            if _go(_raw_type) is _t.Union:
+                                _args = _t.get_args(_raw_type)
+                                _non_none = [a for a in _args if a is not type(None)]
+                                if len(_non_none) == 1:
+                                    _raw_type = _non_none[0]
+                        except Exception:
+                            pass
+                        _is_dict_type = _go(_raw_type) is dict or _raw_type is dict
+                        if _is_dict_type:
+                            # Inject the full JSON body as the dict param
+                            kwargs[param_name] = body if isinstance(body, dict) else {}
+                        elif isinstance(body, dict) and param_name in body:
                             kwargs[param_name] = body[param_name]
                         elif not param.required and param.default is not inspect.Parameter.empty:
                             kwargs[param_name] = param.default
-                    except:
+                    except Exception:
                         if not param.required and param.default is not inspect.Parameter.empty:
                             kwargs[param_name] = param.default
             

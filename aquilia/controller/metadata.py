@@ -386,8 +386,29 @@ def _extract_method_params(
                         # Generic Annotated without DI marker → treat as query
                         source = 'query'
                 else:
-                    # Non-Annotated generic types (Optional[str], List[int]) → query
-                    source = 'query'
+                    # Dict[str, Any] and similar mapping types → treat as body
+                    # (raw JSON body injection for POST/PUT/PATCH handlers).
+                    # All other non-Annotated generics (List, Optional, etc.) → query.
+                    _generic_origin = get_origin(param_type)
+                    if _generic_origin is dict:
+                        source = 'body'
+                    else:
+                        # Check Optional[Dict[...]] → Optional is Union[X, None],
+                        # so unwrap and re-check the first arg.
+                        try:
+                            from typing import Union
+                            if _generic_origin is Union:
+                                _inner_args = get_args(param_type)
+                                # Optional[X] → Union[X, None]; X may itself be a Dict
+                                _non_none = [a for a in _inner_args if a is not type(None)]
+                                if len(_non_none) == 1 and get_origin(_non_none[0]) is dict:
+                                    source = 'body'
+                                else:
+                                    source = 'query'
+                            else:
+                                source = 'query'
+                        except Exception:
+                            source = 'query'
             elif param_name == "session" or (hasattr(param_type, "__name__") and param_type.__name__ == "Session"):
                 # Always treat Session as DI source
                 source = 'di'
