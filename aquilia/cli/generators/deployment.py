@@ -253,75 +253,94 @@ class WorkspaceIntrospector:
         return data
 
     def _parse_workspace(self, content: str) -> Dict[str, Any]:
-        """Parse workspace.py for deployment-relevant configuration."""
+        """Parse workspace.py for deployment-relevant configuration.
+
+        Only considers *uncommented* lines so that commented-out
+        configuration blocks (e.g. ``# .sessions(...)``) do not
+        trigger service provisioning.
+        """
         data: Dict[str, Any] = {}
 
+        # Strip comment-only lines and inline comments to avoid
+        # false-positive matches on commented-out configuration.
+        active_lines: list[str] = []
+        for raw_line in content.splitlines():
+            stripped = raw_line.strip()
+            if stripped.startswith("#"):
+                continue  # skip full-line comments
+            # Remove inline comments (naive but good enough for workspace.py)
+            if " #" in stripped:
+                stripped = stripped[:stripped.index(" #")]
+            active_lines.append(stripped)
+        active = "\n".join(active_lines)
+
         # Name
-        m = re.search(r'Workspace\(\s*name="([^"]+)"', content)
+        m = re.search(r'Workspace\(\s*name="([^"]+)"', active)
         if m:
             data["name"] = m.group(1)
 
         # Version
-        m = re.search(r'version="([^"]+)"', content)
+        m = re.search(r'version="([^"]+)"', active)
         if m:
             data["version"] = m.group(1)
 
         # Database
-        if ".database(" in content:
+        if ".database(" in active:
             data["has_db"] = True
-            m = re.search(r'\.database\([^)]*url="([^"]+)"', content)
+            m = re.search(r'\.database\([^)]*url="([^"]+)"', active)
             if m:
                 data["db_url"] = m.group(1)
 
         # Sessions
-        if ".sessions(" in content:
+        if ".sessions(" in active:
             data["has_sessions"] = True
-            if 'store_name="redis"' in content or 'store="redis"' in content:
+            if 'store_name="redis"' in active or 'store="redis"' in active:
                 data["session_store"] = "redis"
-            elif 'store_name="memory"' in content or 'store="memory"' in content:
+            elif 'store_name="memory"' in active or 'store="memory"' in active:
                 data["session_store"] = "memory"
 
         # Cache
-        if "Integration.cache" in content or "cache" in content.lower():
-            if "redis" in content.lower():
-                data["has_cache"] = True
-                data["cache_backend"] = "redis"
+        if "Integration.cache" in active:
+            data["has_cache"] = True
+            m = re.search(r'backend="([^"]+)"', active)
+            if m:
+                data["cache_backend"] = m.group(1)
 
         # WebSockets
-        if "register_sockets" in content or "AquilaSockets" in content:
+        if "register_sockets" in active or "AquilaSockets" in active:
             data["has_websockets"] = True
 
         # Mail
-        if "Integration.mail" in content or "AquilaMail" in content:
+        if "Integration.mail" in active or "AquilaMail" in active:
             data["has_mail"] = True
 
         # Auth
-        if "Integration.auth" in content or "AquilAuth" in content:
+        if "Integration.auth" in active or "AquilAuth" in active:
             data["has_auth"] = True
 
         # Templates
-        if "Integration.templates" in content:
+        if "Integration.templates" in active:
             data["has_templates"] = True
 
         # Static files
-        if "Integration.static_files" in content:
+        if "Integration.static_files" in active:
             data["has_static"] = True
 
         # OpenAPI
-        if "Integration.openapi" in content:
+        if "Integration.openapi" in active:
             data["has_openapi"] = True
 
         # Faults
-        if "Integration.fault_handling" in content:
+        if "Integration.fault_handling" in active:
             data["has_faults"] = True
 
         # Effects
-        if "Integration.effects" in content or "Effect(" in content:
+        if "Integration.effects" in active or "Effect(" in active:
             data["has_effects"] = True
 
         # Security — parse each flag
         sec_match = re.search(
-            r'\.security\((.*?)\)', content, re.DOTALL,
+            r'\.security\((.*?)\)', active, re.DOTALL,
         )
         if sec_match:
             sec_block = sec_match.group(1)
@@ -334,15 +353,15 @@ class WorkspaceIntrospector:
             if "rate_limiting=True" in sec_block:
                 data["rate_limiting"] = True
 
-        # Fallback — global flag detection
-        if "cors_enabled=True" in content:
+        # Fallback — global flag detection (on active code only)
+        if "cors_enabled=True" in active:
             data["cors_enabled"] = True
-        if "rate_limiting=True" in content:
+        if "rate_limiting=True" in active:
             data["rate_limiting"] = True
 
         # Telemetry — parse each flag
         tel_match = re.search(
-            r'\.telemetry\((.*?)\)', content, re.DOTALL,
+            r'\.telemetry\((.*?)\)', active, re.DOTALL,
         )
         if tel_match:
             tel_block = tel_match.group(1)
@@ -353,14 +372,17 @@ class WorkspaceIntrospector:
             if "logging_enabled=True" in tel_block:
                 data["logging_enabled"] = True
 
-        # Fallback — global flag detection
-        if "tracing_enabled=True" in content:
-            data["tracing_enabled"] = True
-        if "metrics_enabled=True" in content:
-            data["metrics_enabled"] = True
+        # Fallback — global flag detection (on active code only)
+        # Only detect telemetry flags from .telemetry() blocks, not
+        # from unrelated contexts like fault_handling(metrics_enabled=True).
+        if "tracing_enabled=True" in active and ".telemetry(" not in active:
+            # Only use fallback if regex above didn't find .telemetry()
+            data.setdefault("tracing_enabled", False)
+        if "metrics_enabled=True" in active and ".telemetry(" not in active:
+            data.setdefault("metrics_enabled", False)
 
         # MLOps — check for mlops module or imports
-        if "mlops" in content.lower():
+        if "mlops" in active.lower():
             data["has_mlops"] = True
 
         return data

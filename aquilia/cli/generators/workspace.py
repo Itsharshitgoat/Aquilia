@@ -524,8 +524,6 @@ class WorkspaceGenerator:
             """
 
             from aquilia import Workspace, Module, Integration
-            from datetime import timedelta
-            from aquilia.sessions import SessionPolicy, PersistencePolicy, ConcurrencyPolicy, TransportPolicy
 
 
             # Define workspace structure
@@ -595,55 +593,33 @@ class WorkspaceGenerator:
                     etag=True,
                 ))
 
-                # Sessions - Configure session management
-                .sessions(
-                    policies=[
-                        # Default session policy for web users
-                        SessionPolicy(
-                            name="default",
-                            ttl=timedelta(days=7),
-                            idle_timeout=timedelta(hours=1),
-                            rotate_on_privilege_change=True,
-                            persistence=PersistencePolicy(
-                                enabled=True,
-                                store_name="memory",
-                                write_through=True,
-                            ),
-                            concurrency=ConcurrencyPolicy(
-                                max_sessions_per_principal=5,
-                                behavior_on_limit="evict_oldest",
-                            ),
-                            transport=TransportPolicy(
-                                adapter="cookie",
-                                cookie_httponly=True,
-                                cookie_secure=False,  # Set to True in production
-                                cookie_samesite="lax",
-                            ),
-                            scope="user",
-                        ),
-                    ],
-                )
+                # Sessions (uncomment to enable session management)
+                # .sessions(
+                #     policies=[
+                #         SessionPolicy(
+                #             name="default",
+                #             ttl=timedelta(days=7),
+                #             idle_timeout=timedelta(hours=1),
+                #         ),
+                #     ],
+                # )
 
-                # Security - Enable/disable security features
-                # These flags control which security middleware are auto-registered.
-                # For fine-grained control, use Integration.cors(), Integration.csp(),
+                # Security (uncomment to enable security middleware)
+                # Fine-grained: use Integration.cors(), Integration.csp(),
                 # Integration.rate_limit() with .integrate().
-                .security(
-                    cors_enabled=False,       # Enable CORS (configure with Integration.cors() for details)
-                    csrf_protection=False,    # Enable CSRF protection tokens
-                    helmet_enabled=True,      # Enable Helmet-style security headers (X-Frame-Options, etc.)
-                    rate_limiting=True,       # Enable rate limiting (100 req/min default)
-                    https_redirect=False,     # Enable HTTP→HTTPS redirect (enable in production)
-                    hsts=False,               # Enable HSTS header (enable in production)
-                    proxy_fix=False,          # Enable X-Forwarded-* processing (enable behind reverse proxy)
-                )
+                # .security(
+                #     cors_enabled=False,
+                #     csrf_protection=False,
+                #     helmet_enabled=True,
+                #     rate_limiting=False,
+                # )
 
-                # Telemetry - Enable observability
-                .telemetry(
-                    tracing_enabled=False,
-                    metrics_enabled=True,
-                    logging_enabled=True,
-                )
+                # Telemetry (uncomment to enable observability)
+                # .telemetry(
+                #     tracing_enabled=False,
+                #     metrics_enabled=True,
+                #     logging_enabled=True,
+                # )
             )
 
 
@@ -1334,7 +1310,9 @@ class WorkspaceGenerator:
 
             (self.path / 'Dockerfile').write_text(docker_gen.generate_dockerfile())
             (self.path / '.dockerignore').write_text(docker_gen.generate_dockerignore())
-            (self.path / 'docker-compose.yml').write_text(compose_gen.generate_compose())
+            (self.path / 'docker-compose.yml').write_text(
+                compose_gen.generate_compose(include_monitoring=False)
+            )
         except Exception:
             # Non-fatal — the workspace is still usable without these files
             pass

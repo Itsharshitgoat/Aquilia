@@ -594,7 +594,18 @@ class AquiliaServer:
         for ctx in self.runtime.meta.app_contexts:
             # Derive module package from any registered import path.
             # Controller paths look like "modules.chat.controllers:ChatController"
-            import_paths = list(ctx.controllers) + list(ctx.services)
+            # Items may be strings OR ServiceConfig/dataclass objects.
+            raw_paths = list(ctx.controllers) + list(ctx.services)
+            import_paths = []
+            for item in raw_paths:
+                if isinstance(item, str):
+                    import_paths.append(item)
+                elif hasattr(item, "class_path"):
+                    import_paths.append(item.class_path)
+                else:
+                    # Unknown type — try str() as last resort
+                    import_paths.append(str(item))
+
             for import_path in import_paths:
                 if ":" in import_path:
                     mod_dotted = import_path.split(":", 1)[0]

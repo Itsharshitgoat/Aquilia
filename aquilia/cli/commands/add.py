@@ -41,7 +41,7 @@ def _ensure_docker_files(workspace_root: Path, verbose: bool = False) -> None:
 
     compose_file = workspace_root / "docker-compose.yml"
     if not compose_file.exists():
-        compose_file.write_text(compose_gen.generate_compose())
+        compose_file.write_text(compose_gen.generate_compose(include_monitoring=False))
         generated.append("docker-compose.yml")
 
     if generated and verbose:
