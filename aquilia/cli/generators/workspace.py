@@ -34,6 +34,16 @@ class WorkspaceGenerator:
         # Create starter page
         self._create_starter_page()
         
+        # Create default scaffold files
+        self._create_models_dir()
+        if not self.minimal:
+            self._create_cache_file()
+            self._create_auth_file()
+        
+        # Template files (--template flag or full mode)
+        if self.template:
+            self._create_template_files()
+        
         # Create additional files
         if not self.minimal:
             self._create_gitignore()
@@ -42,13 +52,22 @@ class WorkspaceGenerator:
     
     def _create_directories(self) -> None:
         """Create workspace directories."""
-        dirs = ['modules', 'config']
+        dirs = ['modules', 'config', 'models']
         
         if not self.minimal:
             dirs.extend(['artifacts', 'runtime'])
         
+        if self.template:
+            dirs.extend([
+                'templates',
+                'templates/includes',
+                'assets',
+                'assets/css',
+                'assets/js',
+            ])
+        
         for dir_name in dirs:
-            (self.path / dir_name).mkdir(exist_ok=True)
+            (self.path / dir_name).mkdir(parents=True, exist_ok=True)
     
     def _extract_field(self, content: str, pattern: str, default: str) -> str:
         """Extract a single field from manifest content."""
@@ -223,16 +242,32 @@ class WorkspaceGenerator:
         print(f"\u2705 Updated workspace.py with {len(discovered_modules)} module configurations")
 
     def _discover_modules(self) -> dict:
-        """Enhanced module discovery with intelligent classification."""
-        from aquilia.cli.discovery_utils import EnhancedDiscovery
+        """Enhanced module discovery with intelligent classification.
         
+        Architecture v2: Uses AutoDiscoveryEngine (AST-based) as primary
+        scanner, with EnhancedDiscovery as fallback for legacy workspaces.
+        """
         modules_dir = self.path / 'modules'
         discovered_modules = {}
         
         if not modules_dir.exists():
             return discovered_modules
         
-        discovery = EnhancedDiscovery(verbose=False)
+        # v2: Try AST-based auto-discovery engine first
+        ast_results = {}
+        try:
+            from aquilia.discovery.engine import AutoDiscoveryEngine
+            engine = AutoDiscoveryEngine(modules_dir)
+            ast_results = engine.discover_all()
+        except Exception:
+            pass
+        
+        # Legacy discovery as fallback
+        try:
+            from aquilia.cli.discovery_utils import EnhancedDiscovery
+            discovery = EnhancedDiscovery(verbose=False)
+        except Exception:
+            discovery = None
         
         # Find all module directories with manifest.py
         module_dirs = [d for d in modules_dir.iterdir() 
@@ -252,43 +287,66 @@ class WorkspaceGenerator:
                 tags = self._extract_list(manifest_content, r'tags=\[(.*?)\]', [])
                 base_path = self._extract_field(manifest_content, r'base_path="([^"]+)"', f"modules.{mod_name}")
                 depends_on = self._extract_list(manifest_content, r'depends_on=\[(.*?)\]', [])
+                # v2: also extract imports field
+                imports_list = self._extract_list(manifest_content, r'imports=\s*\[(.*?)\]', [])
+                if imports_list:
+                    depends_on = imports_list  # v2 imports supersede legacy depends_on
                 
                 # Extract current manifest declarations (baseline)
                 manifest_services_list = self._extract_list(manifest_content, r'services=\s*\[(.*?)\]', [])
                 manifest_controllers_list = self._extract_list(manifest_content, r'controllers=\s*\[(.*?)\]', [])
                 manifest_middleware_list = self._extract_list(manifest_content, r'middleware=\s*\[(.*?)\]', [])
-                
-                # Extract socket controllers from manifest declarations
                 manifest_socket_controllers_list = self._extract_list(manifest_content, r'socket_controllers=\s*\[(.*?)\]', [])
+                # v2: Extract new component types
+                manifest_guards_list = self._extract_list(manifest_content, r'guards=\s*\[(.*?)\]', [])
+                manifest_pipes_list = self._extract_list(manifest_content, r'pipes=\s*\[(.*?)\]', [])
+                manifest_interceptors_list = self._extract_list(manifest_content, r'interceptors=\s*\[(.*?)\]', [])
+                manifest_exports_list = self._extract_list(manifest_content, r'exports=\s*\[(.*?)\]', [])
 
-                # ENHANCED: Use intelligent discovery to properly classify items
-                try:
-                    result = discovery.discover_module_controllers_and_services(
-                        base_path, mod_name
-                    )
-                    # Handle both 2-tuple (legacy) and 3-tuple (new) return values
-                    if len(result) == 3:
-                        discovered_controllers, discovered_services, discovered_sockets = result
-                    else:
-                        discovered_controllers, discovered_services = result
-                        discovered_sockets = []
-                    
-                    # Use discovered classification (more accurate than manifest)
-                    services_list = discovered_services if discovered_services else manifest_services_list
-                    controllers_list = discovered_controllers if discovered_controllers else manifest_controllers_list
-                    socket_controllers_list = discovered_sockets if discovered_sockets else manifest_socket_controllers_list
-                    
-                except Exception:
-                    # Fallback to manifest declarations if discovery fails
+                # v2: Merge AST-discovered components with manifest declarations
+                if mod_name in ast_results:
+                    result = ast_results[mod_name]
+                    # AST engine provides more accurate classification
+                    controllers_list = [c.name for c in result.controllers] or manifest_controllers_list
+                    services_list = [c.name for c in result.services] or manifest_services_list
+                    guards_list = [c.name for c in result.guards] or manifest_guards_list
+                    pipes_list = [c.name for c in result.pipes] or manifest_pipes_list
+                    interceptors_list = [c.name for c in result.interceptors] or manifest_interceptors_list
+                    socket_controllers_list = manifest_socket_controllers_list  # AST engine doesn't scan sockets yet
+                else:
+                    # Fallback: try EnhancedDiscovery
                     services_list = manifest_services_list
                     controllers_list = manifest_controllers_list
                     socket_controllers_list = manifest_socket_controllers_list
+                    guards_list = manifest_guards_list
+                    pipes_list = manifest_pipes_list
+                    interceptors_list = manifest_interceptors_list
+                    
+                    if discovery:
+                        try:
+                            result = discovery.discover_module_controllers_and_services(
+                                base_path, mod_name
+                            )
+                            if len(result) == 3:
+                                discovered_controllers, discovered_services, discovered_sockets = result
+                            else:
+                                discovered_controllers, discovered_services = result
+                                discovered_sockets = []
+                            
+                            services_list = discovered_services if discovered_services else manifest_services_list
+                            controllers_list = discovered_controllers if discovered_controllers else manifest_controllers_list
+                            socket_controllers_list = discovered_sockets if discovered_sockets else manifest_socket_controllers_list
+                        except Exception:
+                            pass
                 
                 # Check for actual declarations/discoveries
                 has_services = len(services_list) > 0
                 has_controllers = len(controllers_list) > 0
                 has_sockets = len(socket_controllers_list) > 0
                 has_middleware = len(manifest_middleware_list) > 0
+                has_guards = len(guards_list) > 0
+                has_pipes = len(pipes_list) > 0
+                has_interceptors = len(interceptors_list) > 0
                 
                 discovered_modules[mod_name] = {
                     'name': mod_name,
@@ -304,14 +362,24 @@ class WorkspaceGenerator:
                     'has_controllers': has_controllers,
                     'has_sockets': has_sockets,
                     'has_middleware': has_middleware,
+                    'has_guards': has_guards,
+                    'has_pipes': has_pipes,
+                    'has_interceptors': has_interceptors,
                     'services_list': services_list,
                     'controllers_list': controllers_list,
                     'socket_controllers_list': socket_controllers_list,
                     'middleware_list': manifest_middleware_list,
+                    'guards_list': guards_list,
+                    'pipes_list': pipes_list,
+                    'interceptors_list': interceptors_list,
+                    'exports_list': manifest_exports_list,
                     'services_count': len(services_list),
                     'controllers_count': len(controllers_list),
                     'socket_controllers_count': len(socket_controllers_list),
                     'middleware_count': len(manifest_middleware_list),
+                    'guards_count': len(guards_list),
+                    'pipes_count': len(pipes_list),
+                    'interceptors_count': len(interceptors_list),
                     'manifest_path': mod_dir / 'manifest.py',
                 }
             except Exception:
@@ -467,9 +535,10 @@ class WorkspaceGenerator:
                     version="0.1.0",
                     description="Aquilia workspace",
                 )
-                # Starter — the server auto-loads starter.py from the workspace
-                # root when debug=True. No need to register it as a module.
-                # Delete starter.py once you add your own routes.
+                # Starter module — registered here so the server does not need
+                # to hard-code it. Delete this line (and starter.py) once you
+                # add your own modules with a GET "/" route.
+                .starter("starter")
 {"" if not module_registrations else chr(10) + "    # Auto-detected modules" + module_registrations}
                 # Add modules here with explicit configuration:
                 # .module(Module("auth", version="1.0.0", description="Authentication module").route_prefix("/api/v1/auth").depends_on("core"))
@@ -491,6 +560,24 @@ class WorkspaceGenerator:
                     metrics_enabled=True,
                 ))
                 .integrate(Integration.patterns())
+
+                # Database - Configure the ORM backend
+                # Uncomment and set the connection URL for your database.
+                .integrate(Integration.database(
+                    # url="sqlite:///db.sqlite3",     # SQLite (dev)
+                    # url="postgresql://user:pass@localhost:5432/{self.name}",  # PostgreSQL
+                    pool_size=5,
+                    echo=False,
+                    auto_migrate=False,
+                ))
+
+                # Cache - In-memory by default, switch to Redis for production
+                .integrate(Integration.cache(
+                    backend="memory",
+                    default_ttl=300,
+                    max_size=1024,
+                    key_prefix="{self.name}:",
+                ))
                 
                 # Templates - Fluent configuration
                 .integrate(
@@ -588,12 +675,17 @@ class WorkspaceGenerator:
                     version="0.1.0",
                     description="{self.name} workspace",
                 )
+                # Starter module — remove once you add GET /
+                .starter("starter")
 
                 # Integrations — core only
                 .integrate(Integration.di(auto_wire=True))
                 .integrate(Integration.routing(strict_matching=True))
                 .integrate(Integration.fault_handling(default_strategy="propagate"))
                 .integrate(Integration.patterns())
+
+                # Database (uncomment to enable)
+                # .integrate(Integration.database(url="sqlite:///db.sqlite3"))
 
                 # Add modules:
                 #   .module(Module("users").route_prefix("/users"))
@@ -722,7 +814,353 @@ class WorkspaceGenerator:
         ''')
 
         (self.path / 'starter.py').write_text(content)
-    
+
+    # ------------------------------------------------------------------
+    # Scaffold files: models, cache, auth, templates
+    # ------------------------------------------------------------------
+
+    def _create_models_dir(self) -> None:
+        """Create models/{workspace_name}.py with a basic Aquilia ORM model."""
+        models_dir = self.path / 'models'
+        models_dir.mkdir(exist_ok=True)
+
+        model_name = self.name.capitalize()
+        table_name = self.name.lower()
+
+        init_content = textwrap.dedent(f'''\
+            """
+            {self.name} workspace models.
+
+            Import your models here so they are registered with the ORM
+            when the workspace boots.
+            """
+
+            from .{self.name} import *  # noqa: F401,F403
+        ''').strip()
+
+        model_content = textwrap.dedent(f'''\
+            """
+            {model_name} models — Aquilia ORM.
+
+            Define your database models here. Models are auto-discovered
+            when ``auto_discover=True`` in the workspace or module manifest.
+
+            Usage:
+                from models.{self.name} import {model_name}Item
+
+                # Create
+                item = await {model_name}Item.objects.create(name="Example")
+
+                # Query
+                items = await {model_name}Item.objects.all()
+                item  = await {model_name}Item.objects.get(id=1)
+
+                # Filter
+                active = await {model_name}Item.objects.filter(active=True)
+            """
+
+            from aquilia.models import Model
+            from aquilia.models.fields import (
+                AutoField,
+                CharField,
+                TextField,
+                BooleanField,
+                DateTimeField,
+            )
+
+
+            class {model_name}Item(Model):
+                """Example model for the {self.name} workspace."""
+
+                table = "{table_name}_items"
+
+                id = AutoField(primary_key=True)
+                name = CharField(max_length=255)
+                description = TextField(blank=True, default="")
+                active = BooleanField(default=True)
+                created_at = DateTimeField(auto_now_add=True)
+                updated_at = DateTimeField(auto_now=True)
+
+                class Meta:
+                    ordering = ["-created_at"]
+
+                def __repr__(self):
+                    return f"<{model_name}Item id={{self.id}} name={{self.name!r}}>"
+        ''').strip()
+
+        (models_dir / '__init__.py').write_text(init_content)
+        (models_dir / f'{self.name}.py').write_text(model_content)
+
+    def _create_cache_file(self) -> None:
+        """Create cache.py with Aquilia cache configuration scaffold."""
+        content = textwrap.dedent(f'''\
+            """
+            {self.name} — Cache Configuration.
+
+            Configure caching strategies for the workspace.
+            This file is auto-imported by the workspace when
+            ``Integration.cache()`` is present in workspace.py.
+
+            Aquilia supports multiple eviction policies:
+            - LRU  (Least Recently Used)
+            - LFU  (Least Frequently Used)
+            - FIFO (First In, First Out)
+            - TTL  (Time To Live — expiry-based)
+
+            Usage in controllers:
+                from aquilia.cache import cached
+
+                @GET("/items")
+                @cached(ttl=60, key="items:all")
+                async def list_items(self, ctx):
+                    ...
+            """
+
+            from aquilia.cache import CacheConfig, EvictionPolicy
+
+
+            # Workspace-level cache settings
+            cache_config = CacheConfig(
+                # Default backend — switch to "redis" for production
+                backend="memory",
+
+                # Maximum entries before eviction kicks in
+                max_size=1024,
+
+                # Default TTL in seconds (0 = no expiry)
+                default_ttl=300,
+
+                # Eviction strategy
+                eviction_policy=EvictionPolicy.LRU,
+
+                # Key prefix to avoid collisions in shared stores
+                key_prefix="{self.name}:",
+            )
+
+
+            __all__ = ["cache_config"]
+        ''').strip()
+
+        (self.path / 'cache.py').write_text(content)
+
+    def _create_auth_file(self) -> None:
+        """Create auth.py with Aquilia authentication scaffold."""
+        content = textwrap.dedent(f'''\
+            """
+            {self.name} — Authentication Configuration.
+
+            Configure authentication and authorisation for the workspace.
+            This file is auto-imported when ``Integration.auth()``
+            is present in workspace.py.
+
+            Usage in controllers:
+                from aquilia.auth import authenticated, roles
+
+                @GET("/profile")
+                @authenticated
+                async def profile(self, ctx):
+                    user = ctx.identity
+                    return {{"id": user.id, "email": user.email}}
+
+                @GET("/admin")
+                @roles("admin")
+                async def admin_panel(self, ctx):
+                    ...
+            """
+
+            from aquilia.auth import (
+                AuthConfig,
+                TokenManager,
+                PasswordHasher,
+            )
+            from datetime import timedelta
+
+
+            # Workspace-level auth settings
+            auth_config = AuthConfig(
+                # Token settings
+                token_algorithm="HS256",
+                access_token_ttl=timedelta(minutes=30),
+                refresh_token_ttl=timedelta(days=7),
+
+                # Password hashing
+                hasher=PasswordHasher(
+                    algorithm="argon2",
+                    time_cost=3,
+                    memory_cost=65536,
+                    parallelism=4,
+                ),
+
+                # Session binding — tie tokens to session IDs
+                session_binding=True,
+
+                # Guard defaults
+                default_guard="jwt",
+
+                # OAuth providers (uncomment to enable)
+                # oauth_providers={{
+                #     "google": OAuthProvider(
+                #         client_id="...",
+                #         client_secret="...",
+                #         scopes=["openid", "profile", "email"],
+                #     ),
+                # }},
+            )
+
+
+            __all__ = ["auth_config"]
+        ''').strip()
+
+        (self.path / 'auth.py').write_text(content)
+
+    def _create_template_files(self) -> None:
+        """Create template scaffold files for --template flag.
+
+        Generates:
+        - templates/includes/base.html   (Jinja2 base layout)
+        - templates/index.html           (extends base)
+        - assets/css/style.css           (basic styles)
+        - assets/js/app.js               (basic JS)
+        """
+        # --- base.html (Jinja2 include layout) ---
+        base_html = textwrap.dedent(f'''\
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+                <title>{{% block title %}}{self.name.capitalize()}{{% endblock %}}</title>
+                <link rel="stylesheet" href="/static/css/style.css" />
+                {{% block head %}}{{% endblock %}}
+            </head>
+            <body>
+                <header>
+                    {{% block header %}}
+                    <nav>
+                        <a href="/">{self.name.capitalize()}</a>
+                    </nav>
+                    {{% endblock %}}
+                </header>
+
+                <main>
+                    {{% block content %}}{{% endblock %}}
+                </main>
+
+                <footer>
+                    {{% block footer %}}
+                    <p>&copy; {{{{ year }}}} {self.name.capitalize()}. Powered by Aquilia.</p>
+                    {{% endblock %}}
+                </footer>
+
+                <script src="/static/js/app.js"></script>
+                {{% block scripts %}}{{% endblock %}}
+            </body>
+            </html>
+        ''').strip()
+
+        # --- index.html (extends base) ---
+        index_html = textwrap.dedent(f'''\
+            {{% extends "includes/base.html" %}}
+
+            {{% block title %}}Home — {self.name.capitalize()}{{% endblock %}}
+
+            {{% block content %}}
+            <section class="hero">
+                <h1>Welcome to {self.name.capitalize()}</h1>
+                <p>Your Aquilia workspace is ready.</p>
+            </section>
+            {{% endblock %}}
+        ''').strip()
+
+        # --- style.css ---
+        style_css = textwrap.dedent('''\
+            /* Aquilia workspace styles */
+            *, *::before, *::after {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+
+            :root {
+                --color-bg: #ffffff;
+                --color-text: #1a1a2e;
+                --color-primary: #00ed64;
+                --color-accent: #001e2b;
+                --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            }
+
+            body {
+                font-family: var(--font-sans);
+                color: var(--color-text);
+                background: var(--color-bg);
+                line-height: 1.6;
+            }
+
+            header nav {
+                padding: 1rem 2rem;
+                background: var(--color-accent);
+            }
+
+            header nav a {
+                color: var(--color-primary);
+                text-decoration: none;
+                font-weight: 700;
+                font-size: 1.25rem;
+            }
+
+            main {
+                max-width: 960px;
+                margin: 2rem auto;
+                padding: 0 1rem;
+            }
+
+            .hero {
+                text-align: center;
+                padding: 4rem 1rem;
+            }
+
+            .hero h1 {
+                font-size: 2.5rem;
+                margin-bottom: 0.5rem;
+            }
+
+            footer {
+                text-align: center;
+                padding: 2rem 1rem;
+                color: #888;
+                font-size: 0.875rem;
+            }
+        ''').strip()
+
+        # --- app.js ---
+        app_js = textwrap.dedent('''\
+            /**
+             * Aquilia workspace JavaScript.
+             *
+             * This file is loaded on every page via the base template.
+             * Add your client-side logic here.
+             */
+
+            document.addEventListener("DOMContentLoaded", () => {
+                console.log("Aquilia workspace ready.");
+            });
+        ''').strip()
+
+        templates_dir = self.path / 'templates'
+        includes_dir = templates_dir / 'includes'
+        css_dir = self.path / 'assets' / 'css'
+        js_dir = self.path / 'assets' / 'js'
+
+        templates_dir.mkdir(exist_ok=True)
+        includes_dir.mkdir(exist_ok=True)
+        css_dir.mkdir(parents=True, exist_ok=True)
+        js_dir.mkdir(parents=True, exist_ok=True)
+
+        (includes_dir / 'base.html').write_text(base_html)
+        (templates_dir / 'index.html').write_text(index_html)
+        (css_dir / 'style.css').write_text(style_css)
+        (js_dir / 'app.js').write_text(app_js)
+
     def _create_gitignore(self) -> None:
         """Create .gitignore file."""
         content = textwrap.dedent("""

@@ -55,6 +55,10 @@ class ModuleConfig:
     depends_on: List[str] = field(default_factory=list)
     tags: List[str] = field(default_factory=list)
     
+    # v2: Module encapsulation (NestJS-inspired)
+    imports: List[str] = field(default_factory=list)   # modules this module depends on
+    exports: List[str] = field(default_factory=list)   # services/components exposed to importers
+    
     # Lifecycle hooks
     on_startup: Optional[str] = None
     on_shutdown: Optional[str] = None
@@ -74,6 +78,8 @@ class ModuleConfig:
             "fault_domain": self.fault_domain or self.name.upper(),
             "route_prefix": self.route_prefix or f"/{self.name}",
             "depends_on": self.depends_on,
+            "imports": self.imports,
+            "exports": self.exports,
             "tags": self.tags,
             "on_startup": self.on_startup,
             "on_shutdown": self.on_shutdown,
@@ -157,8 +163,36 @@ class Module:
         return self
     
     def depends_on(self, *modules: str) -> "Module":
-        """Set module dependencies."""
+        """Set module dependencies (legacy — prefer imports())."""
         self._config.depends_on = list(modules)
+        return self
+    
+    def imports(self, *modules: str) -> "Module":
+        """
+        Declare module imports (v2 — NestJS-style encapsulation).
+        
+        Modules listed here expose their ``exports`` to this module.
+        Supersedes ``depends_on()`` for dependency declaration.
+        
+        Args:
+            *modules: Names of modules to import from.
+        """
+        self._config.imports = list(modules)
+        # Keep depends_on in sync for backward compatibility
+        self._config.depends_on = list(modules)
+        return self
+    
+    def exports(self, *components: str) -> "Module":
+        """
+        Declare exported components (v2 — NestJS-style encapsulation).
+        
+        Only exported services/components are visible to importing modules.
+        Non-exported components are module-private.
+        
+        Args:
+            *components: Import paths of components to export.
+        """
+        self._config.exports = list(components)
         return self
     
     def tags(self, *module_tags: str) -> "Module":
@@ -1527,6 +1561,7 @@ class Workspace:
         self._mail_config: Optional[Dict[str, Any]] = None
         self._mlops_config: Optional[Dict[str, Any]] = None
         self._cache_config: Optional[Dict[str, Any]] = None
+        self._starter: Optional[str] = None
         self._on_startup: Optional[str] = None
         self._on_shutdown: Optional[str] = None
     
@@ -1548,6 +1583,25 @@ class Workspace:
             hook: Import path to a callable in "module:func" format.
         """
         self._on_shutdown = hook
+        return self
+    
+    def starter(self, module_name: str) -> "Workspace":
+        """
+        Register the starter controller module.
+        
+        The starter controller provides the welcome page at ``/``
+        for new workspaces. When registered via ``.starter()``, the
+        server loads it from the workspace root instead of relying
+        on hard-coded debug-mode logic.
+        
+        Delete the starter file and this line once your own modules
+        provide a ``GET /`` route.
+        
+        Args:
+            module_name: Python module name (e.g. ``"starter"``).
+                         Resolved relative to the workspace root.
+        """
+        self._starter = module_name
         return self
     
     def runtime(
@@ -1843,6 +1897,7 @@ class Workspace:
             },
             "modules": [m.to_dict() for m in self._modules],
             "integrations": self._integrations,
+            "starter": self._starter,
             "on_startup": self._on_startup,
             "on_shutdown": self._on_shutdown,
         }

@@ -754,15 +754,21 @@ def ws_kick(ctx, conn: str, reason: str, redis_url: Optional[str]):
 
 @cli.command('discover')
 @click.option('--path', type=click.Path(), default=None, help='Workspace path')
+@click.option('--sync', is_flag=True, help='Auto-sync discovered components into manifest.py files')
+@click.option('--dry-run', is_flag=True, help='Preview sync changes without writing (use with --sync)')
 @click.pass_context
-def discover(ctx, path: Optional[str]):
+def discover(ctx, path: Optional[str], sync: bool, dry_run: bool):
     """Inspect auto-discovered modules in workspace."""
     from .commands.discover import DiscoveryInspector
 
     try:
         workspace_root = Path(path) if path else Path.cwd()
         inspector = DiscoveryInspector(workspace_root.name, str(workspace_root))
-        inspector.inspect(verbose=ctx.obj['verbose'])
+        inspector.inspect(
+            verbose=ctx.obj['verbose'],
+            sync=sync,
+            dry_run=dry_run,
+        )
     except Exception as e:
         error(f"  {_CROSS} Discovery failed: {e}")
         sys.exit(1)
