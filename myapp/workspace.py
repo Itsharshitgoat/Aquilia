@@ -20,6 +20,7 @@ Separation of concerns:
 
 from aquilia import Workspace, Module, Integration, SessionPolicy
 from datetime import timedelta
+from aquilia.sessions import TransportPolicy
 
 # Define workspace structure
 workspace = (

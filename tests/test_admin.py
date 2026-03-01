@@ -1242,10 +1242,10 @@ class TestAdminTemplates:
         assert "Audit" in html or "audit" in html
 
     def test_theme_colors_in_css(self):
-        """Verify aqdocx theme colors are used."""
+        """Verify Sarvam-inspired theme colors are used."""
         html = render_login_page()
-        assert "#22c55e" in html or "22c55e" in html  # Green accent
-        assert "Outfit" in html or "outfit" in html  # Font
+        assert "#f97316" in html or "f97316" in html  # Orange accent
+        assert "Inter" in html or "inter" in html  # Font
 
     def test_dark_mode_support(self):
         html = render_login_page()

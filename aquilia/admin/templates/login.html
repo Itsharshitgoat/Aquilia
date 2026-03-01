@@ -7,26 +7,26 @@
     <meta name="description" content="Sign in to the Aquilia Admin dashboard.">
     <meta name="author" content="Aquilia Framework">
     <meta name="robots" content="noindex, nofollow">
-    <meta name="theme-color" content="#22c55e">
+    <meta name="theme-color" content="#f97316">
     <meta name="color-scheme" content="dark light">
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <title>Login — {{ site_title|default('Aquilia Admin') }}</title>
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="shortcut icon" href="/static/favicon.ico">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;450;500;550;600;700&display=swap" rel="stylesheet">
     <style>{% include "partials/css.html" %}</style>
 </head>
 <body>
     <div class="login-container">
-        <div class="card login-card">
+        <div class="login-card">
             <div class="login-logo">
                 <div style="margin-bottom: 12px;">
-                    <img src="/static/logo.png" alt="Aquilia" style="width: 64px; height: 64px; object-fit: contain;">
+                    <img src="/static/logo.png" alt="Aquilia" style="width: 48px; height: 48px; object-fit: contain; border-radius: 10px;">
                 </div>
                 <h1 class="gradient-text">{{ site_title|default('Aquilia Admin') }}</h1>
-                <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 8px;">
-                    Sign in to access the admin dashboard
+                <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 6px;">
+                    Sign in to continue
                 </p>
             </div>
             {% if error %}
