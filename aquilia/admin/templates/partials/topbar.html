@@ -1,0 +1,8 @@
+{# AquilAdmin — Top Bar #}
+<header class="admin-topbar">
+    <h2 style="font-size: 1.1rem; font-weight: 600;">{{ page_title|default('Dashboard') }}</h2>
+    <div style="display: flex; align-items: center; gap: 12px;">
+        <span style="font-size: 0.85rem; color: var(--text-secondary);">{{ identity_name|default('Admin') }}</span>
+        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">🌓</button>
+    </div>
+</header>

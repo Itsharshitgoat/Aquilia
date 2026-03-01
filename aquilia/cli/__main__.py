@@ -35,6 +35,60 @@ import re as _re
 
 _DEFAULT_DB_URL = "sqlite:///db.sqlite3"
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Workspace guard — block operational commands when no workspace.py present
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Commands that do NOT require a workspace.py to exist:
+_NO_WORKSPACE_REQUIRED = frozenset({
+    "init", "version", "--version", "--help", "help", "doctor",
+})
+
+
+def _require_workspace(ctx: click.Context) -> None:
+    """Abort if workspace.py is not found in the current directory.
+
+    Allows a small set of commands (``init``, ``version``, ``doctor``)
+    to run without a workspace.  Everything else requires the file.
+    Also skips the check when ``--help`` is requested.
+    """
+    # Never block --help output
+    if ctx.resilient_parsing or "--help" in (ctx.params or {}):
+        return
+    # Check sys.argv for --help (covers Click's eager help handling)
+    import sys as _sys
+    if "--help" in _sys.argv or "-h" in _sys.argv:
+        return
+
+    # Walk up the invocation chain to find the actual sub-command name
+    parts: list[str] = []
+    c: Optional[click.Context] = ctx
+    while c is not None:
+        if c.info_name and c.info_name not in ("cli", "aq"):
+            parts.insert(0, c.info_name)
+        c = c.parent
+    top = parts[0] if parts else ""
+
+    if top in _NO_WORKSPACE_REQUIRED:
+        return
+
+    # During Click's own --help processing, invoked_subcommand is set before
+    # the sub-command callback fires.  At the root level when there's no
+    # sub-command yet, skip the check.
+    if not top:
+        return
+
+    workspace_file = Path("workspace.py")
+    if not workspace_file.exists():
+        click.echo()
+        error(
+            f"  {_CROSS} No workspace.py found in the current directory."
+        )
+        click.echo()
+        info("  Run 'aq init workspace <name>' to create a new Aquilia workspace first.")
+        click.echo()
+        raise SystemExit(1)
+
 
 def _detect_workspace_db_url() -> str:
     """Auto-detect the database URL from workspace.py in the current directory.
@@ -162,6 +216,9 @@ def cli(ctx, verbose: bool, quiet: bool):
     ctx.ensure_object(dict)
     ctx.obj['verbose'] = verbose
     ctx.obj['quiet'] = quiet
+
+    # Workspace guard — operational commands require workspace.py
+    _require_workspace(ctx)
 
 
 # ============================================================================
@@ -1184,18 +1241,20 @@ def db():
 @click.option('--app', type=str, default=None, help='Restrict to specific module/app')
 @click.option('--migrations-dir', type=click.Path(), default='migrations', help='Migrations directory')
 @click.option('--dsl/--no-dsl', default=True, help='Use new DSL format (default: True)')
+@click.option('--format', 'fmt', type=click.Choice(['python', 'crous']), default='crous',
+              help='Migration file format — crous (binary, default) or python')
 @click.pass_context
-def db_makemigrations(ctx, app: Optional[str], migrations_dir: str, dsl: bool):
+def db_makemigrations(ctx, app: Optional[str], migrations_dir: str, dsl: bool, fmt: str):
     """
     Generate migration files from Python Model definitions.
 
-    Uses the new Aquilia Migration DSL by default, which produces
-    human-readable operations (CreateModel, AddField, etc.) with
-    schema snapshot diffing and rename detection.
+    Uses CROUS binary format by default for compact, efficient migration
+    storage.  Pass ``--format=python`` for human-readable DSL files.
 
     Examples:
       aq db makemigrations
       aq db makemigrations --app=products
+      aq db makemigrations --format=python
       aq db makemigrations --no-dsl    # Legacy raw-SQL format
     """
     from .commands.model_cmds import cmd_makemigrations
@@ -1206,6 +1265,7 @@ def db_makemigrations(ctx, app: Optional[str], migrations_dir: str, dsl: bool):
             migrations_dir=migrations_dir,
             verbose=ctx.obj['verbose'],
             use_dsl=dsl,
+            migration_format=fmt,
         )
     except Exception as e:
         error(f"  {_CROSS} makemigrations failed: {e}")
@@ -1533,36 +1593,86 @@ def admin():
 @click.pass_context
 def admin_createsuperuser(ctx, username: str, password: str, email: str):
     """
-    Create an admin superuser.
+    Create an admin superuser in the database.
 
-    Sets AQUILIA_ADMIN_USER and AQUILIA_ADMIN_PASSWORD environment
-    variables in the .env file for development mode.
+    Stores credentials securely using Argon2id/PBKDF2 password hashing
+    in the admin_users table (Django-like architecture).
+
+    Requires ``aq db migrate`` to have been run first to create the
+    admin_users table.
 
     Examples:
       aq admin createsuperuser
       aq admin createsuperuser --username=admin --password=secret
     """
-    import os
+    import asyncio
 
-    env_file = Path('.env')
-    lines = []
-    if env_file.exists():
-        lines = env_file.read_text().splitlines()
+    async def _create():
+        # Connect to the database
+        database_url = _detect_workspace_db_url()
+        try:
+            from aquilia.db.engine import AquiliaDatabase
+            db = AquiliaDatabase(database_url)
+            await db.connect()
+        except Exception:
+            db = None
 
-    # Remove existing admin entries
-    lines = [
-        ln for ln in lines
-        if not ln.startswith('AQUILIA_ADMIN_USER=')
-        and not ln.startswith('AQUILIA_ADMIN_PASSWORD=')
-        and not ln.startswith('AQUILIA_ADMIN_EMAIL=')
-    ]
+        try:
+            from aquilia.admin.models import AdminUser, _hash_password
 
-    lines.append(f'AQUILIA_ADMIN_USER={username}')
-    lines.append(f'AQUILIA_ADMIN_PASSWORD={password}')
-    if email:
-        lines.append(f'AQUILIA_ADMIN_EMAIL={email}')
+            if db is not None:
+                # ORM-based creation (preferred)
+                try:
+                    user = await AdminUser.create_superuser(
+                        username=username,
+                        password=password,
+                        email=email,
+                    )
+                    return True, str(getattr(user, 'pk', '?'))
+                except Exception as e:
+                    # Table might not exist yet — create it
+                    try:
+                        await db.execute(
+                            """CREATE TABLE IF NOT EXISTS admin_users (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                username VARCHAR(150) UNIQUE NOT NULL,
+                                email VARCHAR(254) DEFAULT '',
+                                password_hash TEXT NOT NULL,
+                                is_superuser BOOLEAN DEFAULT 0,
+                                is_staff BOOLEAN DEFAULT 1,
+                                is_active BOOLEAN DEFAULT 1,
+                                first_name VARCHAR(150) DEFAULT '',
+                                last_name VARCHAR(150) DEFAULT '',
+                                last_login TIMESTAMP,
+                                date_joined TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                            )"""
+                        )
+                        hashed = _hash_password(password)
+                        await db.execute(
+                            """INSERT INTO admin_users (username, email, password_hash, is_superuser, is_staff, is_active)
+                               VALUES (?, ?, ?, 1, 1, 1)""",
+                            [username, email, hashed],
+                        )
+                        return True, "direct-insert"
+                    except Exception as e2:
+                        raise RuntimeError(f"Failed to create superuser: {e2}") from e
+            else:
+                raise RuntimeError(
+                    "No database connection available. "
+                    "Run 'aq db migrate' first to set up the database."
+                )
+        finally:
+            if db is not None:
+                try:
+                    await db.disconnect()
+                except Exception:
+                    pass
 
-    env_file.write_text('\n'.join(lines) + '\n')
+    try:
+        ok, pk_info = asyncio.run(_create())
+    except Exception as e:
+        error(f"  {_CROSS} {e}")
+        sys.exit(1)
 
     if not ctx.obj.get('quiet'):
         click.echo()
@@ -1571,7 +1681,8 @@ def admin_createsuperuser(ctx, username: str, password: str, email: str):
         section("Admin Setup")
         kv("Username", username)
         kv("Email", email or "(none)")
-        kv("Env File", str(env_file.resolve()))
+        kv("Storage", "Database (admin_users table)")
+        kv("Password", "Hashed with Argon2id/PBKDF2")
         click.echo()
         next_steps([
             "aq run",
@@ -1615,8 +1726,7 @@ def admin_status(ctx, database_url: Optional[str]):
         click.echo()
 
         section("Configuration")
-        import os
-        kv("Admin User", os.environ.get("AQUILIA_ADMIN_USER", "(not set)"))
+        kv("Admin Auth", "Database (admin_users table)")
         kv("Dashboard URL", "/admin/")
         kv("Audit Log", f"{site.audit_log.count()} entries")
         click.echo()

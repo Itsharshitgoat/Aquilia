@@ -230,6 +230,7 @@ def cmd_makemigrations(
     migrations_dir: str = "migrations",
     verbose: bool = False,
     use_dsl: bool = True,
+    migration_format: str = "crous",
 ) -> List[Path]:
     """
     Generate migration files from Python Model definitions.
@@ -237,6 +238,10 @@ def cmd_makemigrations(
     If use_dsl=True (default), uses the new DSL system with schema
     snapshot diffing and rename detection. Otherwise, uses the legacy
     raw-SQL migration generator.
+
+    Args:
+        migration_format: "crous" (default) for CROUS binary format,
+                          "python" for human-readable DSL files.
 
     Returns:
         List of generated migration file paths
@@ -270,6 +275,28 @@ def cmd_makemigrations(
                 click.style("No model changes detected.", fg="yellow")
             )
             return []
+
+        # Optionally write CROUS-format snapshot alongside the Python migration
+        if migration_format == "crous":
+            try:
+                import crous
+                from aquilia.models.schema_snapshot import create_snapshot
+                snap = create_snapshot(models)
+                crous_snap_path = Path(migrations_dir) / "schema_snapshot.crous"
+                crous.dump(snap, str(crous_snap_path))
+                click.echo(
+                    click.style(
+                        f"  CROUS snapshot: {crous_snap_path}",
+                        dim=True,
+                    )
+                )
+            except ImportError:
+                # crous not installed — fall back to JSON snapshot only
+                if verbose:
+                    click.echo(click.style("  (crous not installed, using JSON snapshot)", dim=True))
+            except Exception as e:
+                if verbose:
+                    click.echo(click.style(f"  (crous snapshot failed: {e})", dim=True))
 
         model_names = ", ".join(m.__name__ for m in models)
         click.echo(

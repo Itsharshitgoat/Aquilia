@@ -1,0 +1,24 @@
+{# AquilAdmin — Pagination Component #}
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}&q={{ search|default('') }}" class="page-btn">←</a>
+    {% else %}
+    <span class="page-btn disabled">←</span>
+    {% endif %}
+
+    {% for p in range(1, total_pages + 1) %}
+        {% if (p - page)|abs <= 2 or p == 1 or p == total_pages %}
+        <a href="?page={{ p }}&q={{ search|default('') }}" class="page-btn {{ 'active' if p == page else '' }}">{{ p }}</a>
+        {% elif (p - page)|abs == 3 %}
+        <span class="page-btn disabled">…</span>
+        {% endif %}
+    {% endfor %}
+
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}&q={{ search|default('') }}" class="page-btn">→</a>
+    {% else %}
+    <span class="page-btn disabled">→</span>
+    {% endif %}
+</div>
+{% endif %}

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ theme|default('dark') }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Dashboard{% endblock %} — {{ site_title|default('Aquilia Admin') }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+    {% block head_css %}
+    {% include "partials/css.html" %}
+    {% endblock %}
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <div class="admin-layout">
+        {% block sidebar %}
+        {% include "partials/sidebar.html" %}
+        {% endblock %}
+
+        <div class="admin-main">
+            {% block topbar %}
+            {% include "partials/topbar.html" %}
+            {% endblock %}
+
+            <div class="admin-content">
+                {% if flash %}
+                <div class="flash flash-{{ flash_type|default('success') }}">{{ flash }}</div>
+                {% endif %}
+
+                {% block content %}{% endblock %}
+            </div>
+        </div>
+    </div>
+
+    <script>
+    {% block base_js %}
+    // Theme toggle
+    function toggleTheme() {
+        const html = document.documentElement;
+        const current = html.getAttribute('data-theme');
+        const next = current === 'dark' ? 'light' : 'dark';
+        html.setAttribute('data-theme', next);
+        localStorage.setItem('aquilia-admin-theme', next);
+    }
+    // Restore saved theme
+    (function() {
+        const saved = localStorage.getItem('aquilia-admin-theme');
+        if (saved) document.documentElement.setAttribute('data-theme', saved);
+    })();
+    // Select-all checkbox
+    function toggleAll(source) {
+        document.querySelectorAll('.row-check').forEach(function(cb) {
+            cb.checked = source.checked;
+        });
+    }
+    {% endblock %}
+    {% block extra_js %}{% endblock %}
+    </script>
+</body>
+</html>

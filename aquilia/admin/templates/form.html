@@ -1,0 +1,87 @@
+{# AquilAdmin — Add / Edit Form View #}
+{% extends "base.html" %}
+
+{% set title_text = ('Add ' ~ verbose_name) if is_create else ('Edit ' ~ verbose_name ~ ' #' ~ pk) %}
+{% block title %}{{ title_text }}{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+    <h1 style="font-size: 1.5rem; font-weight: 700;">{{ title_text }}</h1>
+    <a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/" class="btn btn-secondary">← Back to list</a>
+</div>
+
+<div class="card">
+    {% set action_url = (url_prefix|default('/admin') ~ '/' ~ model_name|lower ~ '/add') if is_create else (url_prefix|default('/admin') ~ '/' ~ model_name|lower ~ '/' ~ pk) %}
+    <form method="POST" action="{{ action_url }}">
+        {% for fld in fields %}
+            {% set name = fld.name|default('') %}
+            {% set label = fld.label|default(name) %}
+            {% set field_type = fld.type|default('text') %}
+            {% set value = fld.value if fld.value is not none else '' %}
+            {% set required = fld.required|default(false) and not fld.readonly|default(false) %}
+            {% set readonly = fld.readonly|default(false) %}
+            {% set help_text = fld.help_text|default('') %}
+            {% set choices = fld.choices %}
+
+            {% if field_type == 'checkbox' %}
+            <div class="form-group">
+                <label class="form-label" style="display: flex; align-items: center; gap: 8px;">
+                    <input type="hidden" name="{{ name }}" value="">
+                    <input type="checkbox" name="{{ name }}" value="1"
+                        {{ 'checked' if value else '' }}
+                        {{ 'disabled' if readonly else '' }}
+                        style="accent-color: var(--accent);">
+                    {{ label }}
+                </label>
+                {% if help_text %}<div class="form-help">{{ help_text }}</div>{% endif %}
+            </div>
+
+            {% elif field_type == 'textarea' %}
+            <div class="form-group">
+                <label class="form-label">{{ label }}</label>
+                <textarea name="{{ name }}" class="form-input"
+                    {{ 'required' if required else '' }}
+                    {{ 'readonly' if readonly else '' }}>{{ value }}</textarea>
+                {% if help_text %}<div class="form-help">{{ help_text }}</div>{% endif %}
+            </div>
+
+            {% elif field_type == 'select' and choices %}
+            <div class="form-group">
+                <label class="form-label">{{ label }}</label>
+                <select name="{{ name }}" class="form-input"
+                    {{ 'required' if required else '' }}
+                    {{ 'disabled' if readonly else '' }}>
+                    {% for choice_val, choice_label in choices %}
+                    <option value="{{ choice_val }}" {{ 'selected' if choice_val|string == value|string else '' }}>{{ choice_label }}</option>
+                    {% endfor %}
+                </select>
+                {% if help_text %}<div class="form-help">{{ help_text }}</div>{% endif %}
+            </div>
+
+            {% else %}
+            <div class="form-group">
+                <label class="form-label">{{ label }}</label>
+                <input type="{{ field_type }}" name="{{ name }}" value="{{ value }}"
+                    class="form-input"
+                    {{ 'required' if required else '' }}
+                    {{ 'readonly' if readonly else '' }}>
+                {% if help_text %}<div class="form-help">{{ help_text }}</div>{% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+
+        <div style="display: flex; gap: 12px; margin-top: 20px;">
+            <button type="submit" class="btn btn-primary">{{ 'Create' if is_create else 'Save Changes' }}</button>
+            <a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+
+{% if can_delete and not is_create %}
+<form method="POST" action="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/{{ pk }}/delete"
+      onsubmit="return confirm('Are you sure you want to delete this record? This cannot be undone.');"
+      style="margin-top: 24px;">
+    <button type="submit" class="btn btn-danger">🗑 Delete this {{ verbose_name }}</button>
+</form>
+{% endif %}
+{% endblock %}

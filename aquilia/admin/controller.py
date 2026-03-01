@@ -512,24 +512,27 @@ class AdminController(Controller):
         """
         Authenticate an admin user.
 
-        Tries AuthManager first (production), then falls back to
+        Tries ORM-based AdminUser first (production), then falls back to
         environment-based superuser (development).
         """
         from aquilia.auth.core import Identity, IdentityType, IdentityStatus
 
-        # Try AuthManager integration
+        # Try ORM-based AdminUser (preferred — Django-like)
         try:
-            from aquilia.auth.manager import AuthManager
-            # This would be injected via DI in production
-        except ImportError:
+            from aquilia.admin.models import AdminUser
+            user = await AdminUser.authenticate(username, password)
+            if user is not None:
+                return user.to_identity()
+        except Exception:
             pass
 
         # Development fallback: AQUILIA_ADMIN_USER / AQUILIA_ADMIN_PASSWORD
         import os
-        admin_user = os.environ.get("AQUILIA_ADMIN_USER", "admin")
-        admin_pass = os.environ.get("AQUILIA_ADMIN_PASSWORD", "admin")
+        admin_user = os.environ.get("AQUILIA_ADMIN_USER")
+        admin_pass = os.environ.get("AQUILIA_ADMIN_PASSWORD")
 
-        if username == admin_user and password == admin_pass:
+        # Only use env fallback if explicitly configured
+        if admin_user and admin_pass and username == admin_user and password == admin_pass:
             return Identity(
                 id="admin-1",
                 type=IdentityType.USER,

@@ -70,6 +70,7 @@ from .registry import register, autodiscover
 from .permissions import AdminPermission, AdminRole
 from .audit import AdminAuditLog, AdminAction
 from .controller import AdminController
+from .models import AdminUser
 from .faults import (
     AdminFault,
     AdminAuthenticationFault,
@@ -99,6 +100,9 @@ __all__ = [
     
     # Controller
     "AdminController",
+    
+    # Models
+    "AdminUser",
     
     # Faults
     "AdminFault",

@@ -1,0 +1,68 @@
+{# AquilAdmin — Model List View #}
+{% extends "base.html" %}
+
+{% block title %}{{ verbose_name_plural }}{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+    <h1 style="font-size: 1.5rem; font-weight: 700;">{{ verbose_name_plural }}</h1>
+</div>
+
+{# ── Search & Add ────────────────────────────────────────────────── #}
+<div class="toolbar">
+    <form class="search-box" method="GET" action="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/">
+        <span>🔍</span>
+        <input type="text" name="q" value="{{ search }}" placeholder="Search {{ verbose_name_plural }}...">
+    </form>
+    <a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/add" class="btn btn-primary">+ Add {{ verbose_name }}</a>
+</div>
+
+{# ── Data Table ──────────────────────────────────────────────────── #}
+<div class="card" style="padding: 0; overflow-x: auto;">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th style="width:40px"><input type="checkbox" onchange="toggleAll(this)"></th>
+                {% for col in list_display %}
+                <th>{{ col.replace('_', ' ')|title }}</th>
+                {% endfor %}
+                <th style="width:80px">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in rows %}
+            <tr>
+                <td><input type="checkbox" class="row-check" value="{{ row.pk }}"></td>
+                {% for col in list_display %}
+                    {% set val = row[col]|default('—') %}
+                    {% set raw_val = row.get('_raw_' ~ col) %}
+                    {% if loop.first %}
+                    <td class="cell-pk"><a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/{{ row.pk }}">{{ val }}</a></td>
+                    {% elif raw_val is sameas true %}
+                    <td class="cell-bool-true">{{ val }}</td>
+                    {% elif raw_val is sameas false %}
+                    <td class="cell-bool-false">{{ val }}</td>
+                    {% else %}
+                    <td>{{ val }}</td>
+                    {% endif %}
+                {% endfor %}
+                <td><a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/{{ row.pk }}" class="btn btn-sm btn-ghost">Edit</a></td>
+            </tr>
+        {% else %}
+            <tr>
+                <td colspan="{{ list_display|length + 2 }}" style="text-align:center; padding:40px; color:var(--text-muted);">
+                    No records found
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{# ── Pagination ──────────────────────────────────────────────────── #}
+{% set total_pages = total_pages %}
+{% include "partials/pagination.html" %}
+<div style="text-align: center; font-size: 0.8rem; color: var(--text-muted); margin-top: 8px;">
+    {{ total }} record(s) found
+</div>
+{% endblock %}
