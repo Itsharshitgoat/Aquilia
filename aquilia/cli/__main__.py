@@ -72,7 +72,7 @@ class AquiliaGroup(click.Group):
         "Production": ["serve", "freeze"],
         "Database": ["db"],
         "Inspect": ["inspect", "manifest", "analytics"],
-        "Subsystems": ["ws", "cache", "mail", "trace"],
+        "Subsystems": ["ws", "cache", "mail"],
         "MLOps": ["pack", "model", "deploy", "observe", "export", "plugin", "lineage", "experiment"],
         "Deploy": ["deploy-gen", "artifact"],
         "Migration": ["migrate"],
@@ -520,15 +520,22 @@ def run(ctx, mode: str, port: int, host: str, reload: bool):
 @cli.command('serve')
 @click.option('--workers', type=int, default=1, help='Number of workers')
 @click.option('--bind', type=str, default='0.0.0.0:8000', help='Bind address')
+@click.option('--use-gunicorn', is_flag=True, help='Use gunicorn with UvicornWorker (recommended for production)')
+@click.option('--timeout', type=int, default=120, help='Worker timeout in seconds (gunicorn only)')
+@click.option('--graceful-timeout', type=int, default=30, help='Graceful shutdown timeout (gunicorn only)')
 @click.pass_context
-def serve(ctx, workers: int, bind: str):
+def serve(ctx, workers: int, bind: str, use_gunicorn: bool, timeout: int, graceful_timeout: int):
     """
-    Start production server (requires frozen artifacts).
+    Start production server with compiled Crous artifacts.
     
+    Uses uvicorn by default. Pass --use-gunicorn for production
+    deployments with gunicorn process management and UvicornWorker.
+
     Examples:
       aq serve
       aq serve --workers=4
-      aq serve --bind=0.0.0.0:8080
+      aq serve --use-gunicorn --workers=4
+      aq serve --bind=0.0.0.0:8080 --use-gunicorn --timeout=180
     """
     from .commands.serve import serve_production
     
@@ -537,6 +544,9 @@ def serve(ctx, workers: int, bind: str):
             workers=workers,
             bind=bind,
             verbose=ctx.obj['verbose'],
+            use_gunicorn=use_gunicorn,
+            timeout=timeout,
+            graceful_timeout=graceful_timeout,
         )
     
     except KeyboardInterrupt:
@@ -577,6 +587,95 @@ def freeze(ctx, output: Optional[str], sign: bool):
     
     except Exception as e:
         error(f"  {_CROSS} Freeze failed: {e}")
+        sys.exit(1)
+
+
+@cli.command('build')
+@click.option('--mode', type=click.Choice(['dev', 'prod']), default='dev', help='Build mode')
+@click.option('--output', type=click.Path(), default='build', help='Output directory')
+@click.option('--compress', type=click.Choice(['none', 'lz4', 'zstd']), default=None, help='Compression')
+@click.option('--check-only', is_flag=True, help='Only run checks, don\'t emit artifacts')
+@click.option('--skip-checks', is_flag=True, help='Skip static checks (faster)')
+@click.pass_context
+def build(ctx, mode: str, output: str, compress: Optional[str], check_only: bool, skip_checks: bool):
+    """
+    Build the workspace (compile, check, bundle).
+
+    Like Vite or Next.js, the build command compiles, validates,
+    and bundles the entire workspace into optimized Crous binary
+    artifacts. If any check fails, the build is aborted.
+
+    Examples:
+      aq build
+      aq build --mode=prod
+      aq build --mode=prod --compress=lz4
+      aq build --check-only
+      aq build --output=dist/
+    """
+    from aquilia.build import AquiliaBuildPipeline
+
+    try:
+        compression = compress or ("lz4" if mode == "prod" else "none")
+        verbose = ctx.obj['verbose']
+
+        if not ctx.obj['quiet']:
+            click.echo()
+            section("Aquilia Build Pipeline")
+            kv("Mode", mode)
+            kv("Compression", compression)
+            kv("Output", output)
+            if check_only:
+                kv("Check Only", "yes")
+            click.echo()
+
+        result = AquiliaBuildPipeline.build(
+            workspace_root=str(Path.cwd()),
+            mode=mode,
+            verbose=verbose,
+            compression=compression,
+            check_only=check_only,
+            output_dir=output,
+        )
+
+        if not ctx.obj['quiet']:
+            # Phase timings
+            if verbose and result.phases:
+                section("Phase Timings")
+                for phase_name, ms in result.phases.items():
+                    kv(f"  {phase_name}", f"{ms:.1f}ms")
+                click.echo()
+
+            # Warnings
+            if result.warnings:
+                for warn in result.warnings:
+                    bullet(str(warn), fg="yellow")
+                click.echo()
+
+            if result.success:
+                success(f"  {_CHECK} {result.summary()}")
+
+                if result.bundle and not check_only:
+                    section("Artifacts")
+                    kv("Count", str(result.artifacts_count))
+                    kv("Fingerprint", result.fingerprint[:16] + "…")
+                    if result.bundle.bundle_path:
+                        kv("Bundle", str(result.bundle.bundle_path))
+                    for a in result.bundle.artifacts:
+                        tree_item(f"{a.name}.crous ({a.size_bytes} bytes)")
+            else:
+                error(f"  {_CROSS} Build FAILED")
+                click.echo()
+                for err in result.errors:
+                    bullet(str(err), fg="red")
+
+                sys.exit(1)
+
+    except ImportError as e:
+        error(f"  {_CROSS} Build pipeline requires the 'crous' package: {e}")
+        info("  Install with: pip install crous")
+        sys.exit(1)
+    except Exception as e:
+        error(f"  {_CROSS} Build error: {e}")
         sys.exit(1)
 
 
@@ -1363,15 +1462,6 @@ cli.add_command(artifact_group)
 from .commands.deploy_gen import deploy_gen_group
 
 cli.add_command(deploy_gen_group)
-
-
-# ============================================================================
-# Trace commands (.aquilia/ directory)
-# ============================================================================
-
-from .commands.trace import trace_group
-
-cli.add_command(trace_group)
 
 
 # ============================================================================

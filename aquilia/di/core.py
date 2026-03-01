@@ -320,16 +320,17 @@ class Container:
             self._raise_not_found(token_key, tag)
         
         # Async instantiation requires event loop
-        # For sync access, we need to handle this carefully
+        # For sync access, check if there's already a running loop
         try:
-            loop = asyncio.get_running_loop()
-            # We're in async context, but resolve() is sync
-            # This is a design trade-off; in practice, handlers use async
+            asyncio.get_running_loop()
+            # We're in async context — caller should use resolve_async() instead
             raise RuntimeError(
                 "resolve() called from async context; use await resolve_async() instead"
             )
-        except RuntimeError:
-            # No running loop - create one (for testing/sync usage)
+        except RuntimeError as e:
+            if "resolve()" in str(e):
+                raise  # Re-raise our own error
+            # No running loop — safe to create one for sync usage
             instance = asyncio.run(self.resolve_async(token, tag=tag, optional=optional))
             return instance
     
@@ -470,7 +471,8 @@ class Container:
             try:
                 await finalizer()
             except Exception as e:
-                print(f"Error during finalizer: {e}")
+                import logging as _log
+                _log.getLogger('aquilia.di').warning(f"Error during finalizer: {e}")
 
         self._finalizers.clear()
         self._cache.clear()
@@ -663,7 +665,8 @@ class Registry:
                 
             except (ImportError, AttributeError) as e:
                 # Log error but continue
-                print(f"Warning: Could not load service {service_str}: {e}")
+                import logging as _log
+                _log.getLogger('aquilia.di').warning(f"Could not load service {service_str}: {e}")
     
     def _build_dependency_graph(self) -> None:
         """
@@ -725,7 +728,8 @@ class Registry:
                 
                 except Exception as e:
                     # Log warning but continue
-                    print(f"Warning: Could not extract dependencies from {provider.meta.token}: {e}")
+                    import logging as _log
+                    _log.getLogger('aquilia.di').warning(f"Could not extract dependencies from {provider.meta.token}: {e}")
             
             # Add to graph
             self._dep_graph.add_provider(provider, dependencies)

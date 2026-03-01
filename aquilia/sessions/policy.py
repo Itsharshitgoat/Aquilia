@@ -10,7 +10,7 @@ Defines session policies that govern behavior:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from typing import Literal, TYPE_CHECKING
 
@@ -236,7 +236,7 @@ class SessionPolicy:
             return None
         
         if now is None:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
         
         return now + self.ttl
     
@@ -255,7 +255,7 @@ class SessionPolicy:
             - (False, "idle_timeout") if idle timeout exceeded
         """
         if now is None:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
         
         # Check expiry
         if session.is_expired(now):

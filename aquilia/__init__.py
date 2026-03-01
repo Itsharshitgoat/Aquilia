@@ -573,21 +573,6 @@ from .artifacts import (
 )
 
 # ============================================================================
-# Trace System (.aquilia/ directory)
-# ============================================================================
-
-from .trace import (
-    AquiliaTrace,
-    TraceManifest,
-    TraceRouteMap,
-    TraceDIGraph,
-    TraceSchemaLedger,
-    TraceLifecycleJournal,
-    TraceConfigSnapshot,
-    TraceDiagnostics,
-)
-
-# ============================================================================
 # Testing Framework (Django-style test infrastructure)
 # ============================================================================
 
@@ -995,16 +980,6 @@ __all__ = [
     "RouteArtifact",
     "DIGraphArtifact",
     "BundleArtifact",
-
-    # Trace System
-    "AquiliaTrace",
-    "TraceManifest",
-    "TraceRouteMap",
-    "TraceDIGraph",
-    "TraceSchemaLedger",
-    "TraceLifecycleJournal",
-    "TraceConfigSnapshot",
-    "TraceDiagnostics",
 
     # Testing Framework
     "TestClient",

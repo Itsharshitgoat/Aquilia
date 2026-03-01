@@ -127,7 +127,7 @@ class SessionState:
             cls_attr = getattr(self.__class__, name, None)
             if isinstance(cls_attr, Field):
                 return super().__getattribute__(f'_{name}')
-        except:
+        except Exception:
             pass
         
         return super().__getattribute__(name)

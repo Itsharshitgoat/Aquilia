@@ -389,7 +389,7 @@ class Session:
             now: Current time (defaults to utcnow)
         """
         if now is None:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
         
         self.expires_at = now + ttl
         self._dirty = True

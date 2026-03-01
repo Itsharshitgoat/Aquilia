@@ -21,7 +21,7 @@ SessionEngine is request-scoped and integrates with:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from .core import Session, SessionID, SessionScope, SessionFlag
@@ -438,7 +438,7 @@ class SessionEngine:
         """
         event_data = {
             "event": event_name,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "policy": self.policy.name,
         }
         

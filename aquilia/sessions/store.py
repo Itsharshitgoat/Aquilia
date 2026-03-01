@@ -14,7 +14,7 @@ import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Protocol, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .core import Session, SessionID
 from .faults import (
@@ -239,7 +239,7 @@ class MemoryStore:
     
     async def cleanup_expired(self) -> int:
         """Remove expired sessions."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expired_ids = []
         
         async with self._lock:
@@ -507,7 +507,7 @@ class FileStore:
     
     async def cleanup_expired(self) -> int:
         """Remove expired session files."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         removed = 0
         
         async with self._lock:
