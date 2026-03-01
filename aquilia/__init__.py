@@ -166,8 +166,8 @@ from .sessions.state import (
     UserPreferencesState,
 )
 
-# Enhanced session features (NEW - Advanced patterns)
-from .sessions.enhanced import (
+# Session guards & context managers (merged from enhanced.py into decorators)
+from .sessions.decorators import (
     SessionContext,
     SessionGuard,
     requires,
