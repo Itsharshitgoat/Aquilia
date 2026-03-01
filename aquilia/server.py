@@ -1617,6 +1617,12 @@ class AquiliaServer:
             self.controller_router._initialized = False
             self.controller_router.initialize()
 
+            # ── Auto-register assets/ as /static if not already served ────
+            # The admin templates reference /static/logo.png and
+            # /static/favicon.ico.  If the user hasn't mapped an "assets"
+            # directory we inject it automatically.
+            self._ensure_admin_static_assets()
+
             self.logger.info(
                 f"🛡️  Admin integration wired: {registered_count} routes at {url_prefix}/ "
                 f"(site: {site_title!r})"
@@ -1626,6 +1632,69 @@ class AquiliaServer:
             self.logger.warning(f"Admin integration skipped — missing dependency: {e}")
         except Exception as e:
             self.logger.error(f"Admin integration failed: {e}", exc_info=True)
+
+    def _ensure_admin_static_assets(self) -> None:
+        """
+        Ensure ``assets/`` directory is served under ``/static`` so that
+        the admin templates can reference ``/static/logo.png`` and
+        ``/static/favicon.ico``.
+
+        If a ``StaticMiddleware`` is already configured and includes
+        the project ``assets/`` dir, this is a no-op.  Otherwise, the
+        ``assets/`` directory is added to the existing middleware or a
+        minimal static handler is installed.
+        """
+        import pathlib
+
+        # Find the project root (CWD or parent of aquilia package)
+        candidates = [
+            pathlib.Path.cwd() / "assets",
+            pathlib.Path(__file__).resolve().parent.parent / "assets",
+        ]
+        assets_dir = None
+        for candidate in candidates:
+            if candidate.is_dir():
+                assets_dir = candidate
+                break
+
+        if assets_dir is None:
+            return
+
+        # Check if /static already maps to assets/
+        existing_mw = getattr(self, "_static_middleware", None)
+        if existing_mw is not None:
+            # Add assets dir to the existing static middleware's lookup
+            existing_dirs = getattr(existing_mw, "directories", {})
+            if "/static" in existing_dirs:
+                existing_path = pathlib.Path(existing_dirs["/static"]).resolve()
+                if existing_path == assets_dir.resolve():
+                    return  # Already mapped
+            # Append assets dir to extra directories for /static prefix
+            extra = getattr(existing_mw, "extra_directories", {})
+            extra.setdefault("/static", [])
+            if str(assets_dir) not in [str(p) for p in extra["/static"]]:
+                extra["/static"].append(str(assets_dir))
+                existing_mw.extra_directories = extra
+                # Rebuild lookup if the middleware supports it
+                if hasattr(existing_mw, "_rebuild_lookup"):
+                    existing_mw._rebuild_lookup()
+            return
+
+        # No static middleware exists — install a minimal one
+        try:
+            from .middleware_ext.static import StaticMiddleware
+            mw = StaticMiddleware(
+                directories={"/static": str(assets_dir)},
+                cache_max_age=86400,
+                etag=True,
+                gzip=False,
+                brotli=False,
+                memory_cache=False,
+            )
+            self.middleware_stack.add(mw, scope="global", priority=6, name="static_files")
+            self._static_middleware = mw
+        except ImportError:
+            pass
 
     async def _load_socket_controllers(self):
         """Load and register WebSocket controllers."""

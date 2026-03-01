@@ -21,6 +21,70 @@ from typing import Any, Literal
 
 
 # ============================================================================
+# _DirtyTrackingDict - Marks parent Session dirty on any mutation
+# ============================================================================
+
+class _DirtyTrackingDict(dict):
+    """
+    A dict subclass that marks its owning Session dirty whenever
+    a mutation occurs (``__setitem__``, ``__delitem__``, ``pop``,
+    ``update``, ``setdefault``, ``clear``).
+
+    This solves the class of bugs where code does::
+
+        session.data["key"] = value
+
+    which is a dict mutation and never triggers ``Session.__setattr__``.
+    Without this wrapper the session would not be persisted because
+    ``_dirty`` stays ``False``.
+    """
+
+    __slots__ = ("_owner",)
+
+    def __init__(self, *args: Any, owner: "Session | None" = None, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        object.__setattr__(self, "_owner", owner)
+
+    def _mark_dirty(self) -> None:
+        owner = object.__getattribute__(self, "_owner")
+        if owner is not None:
+            object.__setattr__(owner, "_dirty", True)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        super().__setitem__(key, value)
+        self._mark_dirty()
+
+    def __delitem__(self, key: str) -> None:
+        super().__delitem__(key)
+        self._mark_dirty()
+
+    def pop(self, key: str, *args: Any) -> Any:
+        result = super().pop(key, *args)
+        self._mark_dirty()
+        return result
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        super().update(*args, **kwargs)
+        self._mark_dirty()
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        had_key = key in self
+        result = super().setdefault(key, default)
+        if not had_key:
+            self._mark_dirty()
+        return result
+
+    def clear(self) -> None:
+        if len(self) > 0:
+            super().clear()
+            self._mark_dirty()
+
+    def _bind(self, owner: "Session") -> None:
+        """Bind (or rebind) this dict to its owning session."""
+        object.__setattr__(self, "_owner", owner)
+
+
+# ============================================================================
 # SessionID - Opaque Cryptographic Identifier
 # ============================================================================
 
@@ -179,6 +243,10 @@ class Session:
     
     Sessions are NOT implicit cookies. They are explicit capabilities
     that grant scoped access to state and identity.
+    
+    The ``data`` dict is wrapped in ``_DirtyTrackingDict`` so that
+    *any* mutation (``session.data["k"] = v``, ``.pop()``, etc.)
+    automatically marks the session dirty, ensuring it gets persisted.
     """
     
     id: SessionID
@@ -196,8 +264,25 @@ class Session:
     _policy_name: str = field(default="", repr=False)
     _fingerprint: str = field(default="", repr=False)
     
+    def __post_init__(self) -> None:
+        """Wrap self.data in _DirtyTrackingDict bound to this session."""
+        raw = object.__getattribute__(self, "data")
+        if not isinstance(raw, _DirtyTrackingDict):
+            wrapped = _DirtyTrackingDict(raw, owner=self)
+            object.__setattr__(self, "data", wrapped)
+        else:
+            raw._bind(self)
+        # __post_init__ may have marked dirty via __setattr__; reset
+        object.__setattr__(self, "_dirty", False)
+    
     def __setattr__(self, name: str, value: Any) -> None:
         """Track mutations that should mark dirty."""
+        if name == "data" and hasattr(self, "_dirty"):
+            # Wrap incoming dicts in _DirtyTrackingDict
+            if not isinstance(value, _DirtyTrackingDict):
+                value = _DirtyTrackingDict(value, owner=self)
+            else:
+                value._bind(self)
         super().__setattr__(name, value)
         if hasattr(self, "_dirty") and name in ("data", "principal", "expires_at", "flags"):
             object.__setattr__(self, "_dirty", True)

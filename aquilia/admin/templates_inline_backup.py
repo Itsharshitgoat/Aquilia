@@ -261,15 +261,9 @@ def _fallback_login(error: str = "", **kw: Any) -> str:
     e = f'<div class="flash flash-error">{html.escape(error)}</div>' if error else ""
     return f"""<!DOCTYPE html><html lang="en" data-theme="dark"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Sign in to the Aquilia Admin dashboard.">
-<meta name="robots" content="noindex, nofollow"><meta name="theme-color" content="#22c55e">
-<meta name="referrer" content="strict-origin-when-cross-origin">
-<title>Login — Aquilia Admin</title>
-<link rel="icon" type="image/x-icon" href="/static/favicon.ico">
-<style>{_FALLBACK_CSS}</style></head><body>
+<title>Login — Aquilia Admin</title><style>{_FALLBACK_CSS}</style></head><body>
 <div class="login-container"><div class="card login-card">
-<div style="text-align:center;margin-bottom:32px">
-<div style="margin-bottom:12px"><img src="/static/logo.png" alt="Aquilia" style="width:64px;height:64px;object-fit:contain"></div>
+<div style="text-align:center;margin-bottom:32px"><div style="font-size:3rem">🦅</div>
 <h1 style="font-size:2rem;font-weight:800">Aquilia Admin</h1>
 <p style="color:var(--text-muted);font-size:.85rem;margin-top:8px">Sign in to access the admin dashboard</p></div>
 {e}<form method="POST" action="/admin/login">

@@ -179,10 +179,93 @@ class TestSession:
         s = self._make_session()
         s.mark_clean()
         assert s.is_dirty is False
+        # Dict mutation via data[key] MUST trigger dirty (framework-level fix)
         s.data["key"] = "value"
-        # __setattr__ for data triggers dirty
+        assert s.is_dirty is True, "data dict mutation must mark session dirty"
+
+        # Full reassignment also triggers dirty
+        s.mark_clean()
         s.data = {"new": "data"}
         assert s.is_dirty is True
+
+    def test_dirty_tracking_data_pop(self):
+        """data.pop() must mark session dirty."""
+        s = self._make_session()
+        s.data["to_remove"] = "val"
+        s.mark_clean()
+        assert s.is_dirty is False
+        s.data.pop("to_remove")
+        assert s.is_dirty is True
+
+    def test_dirty_tracking_data_del(self):
+        """del data[key] must mark session dirty."""
+        s = self._make_session()
+        s.data["to_del"] = "val"
+        s.mark_clean()
+        del s.data["to_del"]
+        assert s.is_dirty is True
+
+    def test_dirty_tracking_data_update(self):
+        """data.update() must mark session dirty."""
+        s = self._make_session()
+        s.mark_clean()
+        s.data.update({"a": 1, "b": 2})
+        assert s.is_dirty is True
+
+    def test_dirty_tracking_data_setdefault(self):
+        """data.setdefault() must mark dirty on new key."""
+        s = self._make_session()
+        s.mark_clean()
+        s.data.setdefault("new_key", "default")
+        assert s.is_dirty is True
+
+    def test_dirty_tracking_data_clear(self):
+        """data.clear() must mark dirty if data was non-empty."""
+        s = self._make_session()
+        s.data["x"] = 1
+        s.mark_clean()
+        s.data.clear()
+        assert s.is_dirty is True
+
+    def test_dirty_tracking_data_clear_empty_noop(self):
+        """data.clear() on empty dict should not mark dirty."""
+        s = self._make_session()
+        s.mark_clean()
+        s.data.clear()  # empty, no change
+        assert s.is_dirty is False
+
+    def test_dirty_tracking_data_survives_reassignment(self):
+        """After data reassignment, new dict must also track dirty."""
+        s = self._make_session()
+        s.mark_clean()
+        s.data = {"fresh": "dict"}
+        assert s.is_dirty is True
+        s.mark_clean()
+        # Now mutate the new dict — must still trigger dirty
+        s.data["another"] = "key"
+        assert s.is_dirty is True
+
+    def test_dirty_tracking_data_serialization(self):
+        """_DirtyTrackingDict must serialize to dict correctly."""
+        import json
+        s = self._make_session()
+        s.data["foo"] = "bar"
+        s.data["num"] = 42
+        result = json.dumps(dict(s.data))
+        assert '"foo"' in result
+        assert '"num"' in result
+
+    def test_dirty_tracking_data_from_dict_roundtrip(self):
+        """Session.from_dict must wrap data in _DirtyTrackingDict."""
+        from aquilia.sessions.core import _DirtyTrackingDict
+        s = self._make_session()
+        s.data["key"] = "value"
+        d = s.to_dict()
+        s2 = type(s).from_dict(d)
+        assert isinstance(s2.data, _DirtyTrackingDict)
+        assert s2.is_dirty is False
+        s2.data["new"] = "val"
+        assert s2.is_dirty is True
 
     def test_dirty_tracking_principal(self):
         from aquilia.sessions.core import SessionPrincipal
