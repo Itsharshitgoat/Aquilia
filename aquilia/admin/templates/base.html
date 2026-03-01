@@ -17,6 +17,7 @@
     <link rel="shortcut icon" href="/static/favicon.ico">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;450;500;550;600;700&display=swap" rel="stylesheet">
+    <link href="https://unpkg.com/lucide-static@latest/font/lucide.css" rel="stylesheet">
     <style>
     {% block head_css %}
     {% include "partials/css.html" %}
@@ -25,29 +26,58 @@
     {% block extra_head %}{% endblock %}
 </head>
 <body>
-    <div class="admin-layout">
-        {% block sidebar %}
-        {% include "partials/sidebar.html" %}
-        {% endblock %}
+    {# ── Top navigation bar (replaces old sidebar + topbar) ── #}
+    <nav class="admin-topnav">
+        <div class="topnav-inner">
+            <a class="topnav-brand" href="{{ url_prefix|default('/admin') }}/">
+                <img src="/static/logo.png" alt="" onerror="this.style.display='none'">
+                <span>{{ site_title|default('Aquilia') }}</span>
+                <span class="badge">Admin</span>
+            </a>
 
-        <div class="admin-main">
-            {% block topbar %}
-            {% include "partials/topbar.html" %}
-            {% endblock %}
+            <div class="topnav-links">
+                <a class="topnav-link{{ ' active' if not active_model else '' }}" href="{{ url_prefix|default('/admin') }}/">
+                    <i class="icon-layout-dashboard"></i> Dashboard
+                </a>
+                <a class="topnav-link{{ ' active' if active_model == '_audit' else '' }}" href="{{ url_prefix|default('/admin') }}/audit/">
+                    <i class="icon-scroll-text"></i> Audit Log
+                </a>
+                {% for app in app_list|default([]) %}
+                <span class="topnav-sep"></span>
+                {% for model in app.models %}
+                <a class="topnav-link{{ ' active' if active_model == model.model_name|lower else '' }}" href="{{ url_prefix|default('/admin') }}/{{ model.url_name }}/">
+                    <i class="icon-database"></i> {{ model.name_plural }}
+                </a>
+                {% endfor %}
+                {% endfor %}
+            </div>
 
-            <div class="admin-content">
-                {% if flash %}
-                <div class="flash flash-{{ flash_type|default('success') }}">{{ flash }}</div>
-                {% endif %}
-
-                {% block content %}{% endblock %}
+            <div class="topnav-actions">
+                <span class="topnav-user"><i class="icon-user" style="font-size:13px;vertical-align:-1px;margin-right:4px;"></i>{{ identity_name|default('Admin') }}</span>
+                <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme">
+                    <i class="icon-sun"></i>
+                </button>
+                <a class="btn btn-ghost btn-sm" href="{{ url_prefix|default('/admin') }}/logout" style="color:var(--text-faint);">
+                    <i class="icon-log-out" style="font-size:14px;"></i> Logout
+                </a>
             </div>
         </div>
-    </div>
+    </nav>
+
+    {# ── Main content area ── #}
+    <main class="admin-content">
+        {% if flash %}
+        <div class="flash flash-{{ flash_type|default('success') }}">
+            <i class="icon-{% if flash_type == 'error' %}alert-circle{% elif flash_type == 'warning' %}alert-triangle{% elif flash_type == 'info' %}info{% else %}check-circle{% endif %}" style="font-size:16px;flex-shrink:0;"></i>
+            {{ flash }}
+        </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </main>
 
     <script>
     {% block base_js %}
-    // Theme toggle
     function toggleTheme() {
         const html = document.documentElement;
         const current = html.getAttribute('data-theme');
@@ -55,12 +85,10 @@
         html.setAttribute('data-theme', next);
         localStorage.setItem('aquilia-admin-theme', next);
     }
-    // Restore saved theme
     (function() {
         const saved = localStorage.getItem('aquilia-admin-theme');
         if (saved) document.documentElement.setAttribute('data-theme', saved);
     })();
-    // Select-all checkbox
     function toggleAll(source) {
         document.querySelectorAll('.row-check').forEach(function(cb) {
             cb.checked = source.checked;

@@ -1,28 +1,28 @@
-{# AquilAdmin — Model List View #}
 {% extends "base.html" %}
-
 {% block title %}{{ verbose_name_plural }}{% endblock %}
 
 {% block content %}
 <div class="page-header-row">
-    <h2>{{ verbose_name_plural }}</h2>
+    <h2><i class="icon-database" style="font-size:18px;vertical-align:-2px;margin-right:6px;opacity:0.4;"></i>{{ verbose_name_plural }}</h2>
+    <a class="btn btn-primary" href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/add">
+        <i class="icon-plus" style="font-size:14px;"></i> Add {{ verbose_name }}
+    </a>
 </div>
 
-{# ── Search & Add ────────────────────────────────────────────────── #}
+{# ── Search toolbar ── #}
 <div class="toolbar">
     <form class="search-box" method="GET" action="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/">
-        <span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+        <i class="icon-search" style="font-size:15px;color:var(--text-faint);flex-shrink:0;"></i>
         <input type="text" name="q" value="{{ search }}" placeholder="Search {{ verbose_name_plural }}...">
     </form>
-    <a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/add" class="btn btn-primary">+ Add {{ verbose_name }}</a>
 </div>
 
-{# ── Data Table ──────────────────────────────────────────────────── #}
+{# ── Data table ── #}
 <div class="table-container">
     <table class="admin-table">
         <thead>
             <tr>
-                <th style="width:40px"><input type="checkbox" onchange="toggleAll(this)"></th>
+                <th style="width:40px"><input type="checkbox" onchange="toggleAll(this)" aria-label="Select all"></th>
                 {% for col in list_display %}
                 <th>{{ col.replace('_', ' ')|title }}</th>
                 {% endfor %}
@@ -32,25 +32,26 @@
         <tbody>
         {% for row in rows %}
             <tr>
-                <td><input type="checkbox" class="row-check" value="{{ row.pk }}"></td>
+                <td><input type="checkbox" class="row-check" value="{{ row.pk }}" aria-label="Select row"></td>
                 {% for col in list_display %}
                     {% set val = row[col]|default('—') %}
                     {% set raw_val = row.get('_raw_' ~ col) %}
                     {% if loop.first %}
                     <td class="cell-pk"><a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/{{ row.pk }}">{{ val }}</a></td>
                     {% elif raw_val is sameas true %}
-                    <td class="cell-bool-true">{{ val }}</td>
+                    <td class="cell-bool-true"><i class="icon-check-circle" style="font-size:15px;"></i> {{ val }}</td>
                     {% elif raw_val is sameas false %}
-                    <td class="cell-bool-false">{{ val }}</td>
+                    <td class="cell-bool-false"><i class="icon-x-circle" style="font-size:15px;"></i> {{ val }}</td>
                     {% else %}
                     <td>{{ val }}</td>
                     {% endif %}
                 {% endfor %}
-                <td><a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/{{ row.pk }}" class="btn btn-sm btn-ghost">Edit</a></td>
+                <td><a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/{{ row.pk }}" class="btn btn-sm btn-ghost"><i class="icon-edit-3" style="font-size:13px;margin-right:2px;"></i>Edit</a></td>
             </tr>
         {% else %}
             <tr>
                 <td colspan="{{ list_display|length + 2 }}" class="empty-state">
+                    <i class="icon-inbox" style="font-size:28px;display:block;margin-bottom:8px;opacity:0.3;"></i>
                     No records found
                 </td>
             </tr>
@@ -59,10 +60,8 @@
     </table>
 </div>
 
-{# ── Pagination ──────────────────────────────────────────────────── #}
-{% set total_pages = total_pages %}
 {% include "partials/pagination.html" %}
-<div class="record-count" style="text-align: center;">
+<div class="record-count" style="text-align:center;">
     {{ total }} record(s) found
 </div>
 {% endblock %}

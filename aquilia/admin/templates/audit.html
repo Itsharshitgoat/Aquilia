@@ -1,38 +1,43 @@
-{# AquilAdmin — Audit Log Page #}
 {% extends "base.html" %}
-
 {% block title %}Audit Log{% endblock %}
 
 {% block content %}
 <div class="page-header-row">
-    <h2>Audit Log</h2>
+    <h2><i class="icon-scroll-text" style="font-size:18px;vertical-align:-2px;margin-right:6px;opacity:0.4;"></i>Audit Log</h2>
 </div>
 
-<div class="card" style="padding: 0;">
-    <div style="padding: 14px 20px; border-bottom: 1px solid var(--border-color);">
+<div class="glass-card" style="padding:0;">
+    <div style="padding:14px 20px;border-bottom:1px solid var(--border-color);">
         <span class="meta-text">{{ total }} entries</span>
     </div>
 
     {% if entries %}
         {% for entry in entries %}
         <div class="audit-entry">
-            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 {% set action_cls = 'audit-create' if entry.action in ('create', 'login') else ('audit-update' if entry.action in ('update', 'bulk_action') else ('audit-delete' if entry.action == 'delete' else '')) %}
                 <span class="audit-action {{ action_cls }}">{{ entry.action }}</span>
-                <span style="font-weight: 500; font-size: 0.82rem;">{{ entry.username|default('') }}</span>
+                <span style="font-weight:500;font-size:0.82rem;">
+                    <i class="icon-user" style="font-size:12px;vertical-align:-1px;margin-right:2px;color:var(--text-faint);"></i>
+                    {{ entry.username|default('') }}
+                </span>
                 {% if entry.model_name %}
                 <span class="meta-text">on</span>
-                <span style="font-size: 0.82rem;">{{ entry.model_name }}</span>
+                <span style="font-size:0.82rem;">
+                    <i class="icon-box" style="font-size:12px;vertical-align:-1px;margin-right:2px;color:var(--text-faint);"></i>
+                    {{ entry.model_name }}
+                </span>
                 {% endif %}
                 {% if entry.record_pk %}
-                <span style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--accent);">#{{ entry.record_pk }}</span>
+                <span style="font-family:var(--font-mono);font-size:0.78rem;color:var(--accent);">#{{ entry.record_pk }}</span>
                 {% endif %}
-                <span style="margin-left: auto; font-size: 0.72rem; color: var(--text-faint);">
+                <span style="margin-left:auto;font-size:0.72rem;color:var(--text-faint);">
+                    <i class="icon-clock" style="font-size:11px;vertical-align:-1px;margin-right:2px;"></i>
                     {{ entry.timestamp|default('')|string|truncate(19, True, '') }}
                 </span>
             </div>
             {% if entry.changes and entry.changes is mapping %}
-            <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 4px;">
+            <div style="font-size:0.78rem;color:var(--text-muted);margin-top:6px;padding:8px 12px;background:var(--bg-surface);border-radius:var(--radius-sm);font-family:var(--font-mono);line-height:1.7;">
                 {% for field_name, change in entry.changes.items() %}
                     {% if change is mapping %}
                     <span>{{ field_name }}: {{ change.old|default('') }} → {{ change.new|default('') }}</span><br>
@@ -45,7 +50,10 @@
         </div>
         {% endfor %}
     {% else %}
-    <div class="empty-state">No audit entries yet</div>
+    <div class="empty-state">
+        <i class="icon-history" style="font-size:32px;display:block;margin-bottom:12px;opacity:0.3;"></i>
+        No audit entries yet
+    </div>
     {% endif %}
 </div>
 {% endblock %}

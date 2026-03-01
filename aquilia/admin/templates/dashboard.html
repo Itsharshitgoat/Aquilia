@@ -1,62 +1,71 @@
-{# AquilAdmin — Dashboard Page #}
 {% extends "base.html" %}
-
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
-{# ── Stats Cards ─────────────────────────────────────────────────── #}
-<div class="stats-grid">
-    <div class="stat-card">
-        <div class="stat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></div>
-        <div class="stat-value">{{ total_models }}</div>
-        <div class="stat-label">Registered Models</div>
+<div class="page-header">
+    <h1>Dashboard</h1>
+    <p>Overview of your application data and recent activity.</p>
+</div>
+
+{# ── Metric stats row (Sarvam-style counters) ── #}
+<div class="stats-row">
+    <div class="stat-item">
+        <div class="stat-number">{{ total_models }}</div>
+        <div class="stat-label"><i class="icon-layers" style="font-size:12px;vertical-align:-1px;margin-right:3px;opacity:0.5;"></i>Models</div>
     </div>
-    <div class="stat-card">
-        <div class="stat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></div>
-        <div class="stat-value">{{ total_records }}</div>
-        <div class="stat-label">Total Records</div>
+    <div class="stat-item">
+        <div class="stat-number">{{ total_records }}</div>
+        <div class="stat-label"><i class="icon-database" style="font-size:12px;vertical-align:-1px;margin-right:3px;opacity:0.5;"></i>Records</div>
     </div>
-    <div class="stat-card">
-        <div class="stat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
-        <div class="stat-value">{{ recent_actions|length }}</div>
-        <div class="stat-label">Recent Actions</div>
+    <div class="stat-item">
+        <div class="stat-number">{{ recent_actions|length }}</div>
+        <div class="stat-label"><i class="icon-activity" style="font-size:12px;vertical-align:-1px;margin-right:3px;opacity:0.5;"></i>Changes</div>
     </div>
 </div>
 
-{# ── Model Cards ─────────────────────────────────────────────────── #}
-<div class="section-title">Models</div>
+{# ── Model cards grid ── #}
+<div class="section-label">Registered Models</div>
 <div class="model-grid">
 {% for app in app_list %}
     {% for model in app.models %}
-    <a href="{{ url_prefix|default('/admin') }}/{{ model.url_name }}/" class="model-card">
-        <div class="model-card-name">{{ model.name_plural }}</div>
-        <div class="model-card-app">{{ app.app_name }}</div>
-        <div class="model-card-count">{{ model_counts.get(model.model_name, '?') }}</div>
-        <div class="model-card-label">records</div>
+    <a class="model-card" href="{{ url_prefix|default('/admin') }}/{{ model.url_name }}/">
+        <div>
+            <div class="model-card-name">{{ model.name_plural }}</div>
+            <div class="model-card-app">{{ app.app_name }}</div>
+        </div>
+        <div>
+            <div class="model-card-count">{{ model_counts.get(model.model_name, '?') }}</div>
+            <div class="model-card-label">records</div>
+        </div>
     </a>
     {% endfor %}
 {% endfor %}
 </div>
 
-{# ── Recent Activity ─────────────────────────────────────────────── #}
-<div class="card" style="margin-top: 28px;">
-    <div class="card-header"><div class="card-title">Recent Activity</div></div>
-    {% if recent_actions %}
-        {% for entry in recent_actions[:5] %}
-        <div class="audit-entry">
-            <span class="audit-action {{ 'audit-create' if entry.action == 'create' else ('audit-update' if entry.action == 'update' else ('audit-delete' if entry.action == 'delete' else '')) }}">
-                {{ entry.action }}
-            </span>
-            <span style="margin-left: 8px; font-size: 0.82rem;">
-                {{ entry.username|default('') }} {{ entry.model_name|default('') }}
-            </span>
-            <span style="float: right; font-size: 0.72rem; color: var(--text-faint);">
-                {{ entry.timestamp|default('')|string|truncate(19, True, '') }}
-            </span>
-        </div>
-        {% endfor %}
-    {% else %}
-    <div class="empty-state">No recent activity</div>
-    {% endif %}
+{# ── Recent activity ── #}
+{% if recent_actions %}
+<div class="section-label" style="margin-top:36px;">Recent Activity</div>
+<div class="glass-card">
+    {% for entry in recent_actions[:8] %}
+    <div class="audit-entry" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span class="audit-action {{ 'audit-create' if entry.action == 'create' else ('audit-update' if entry.action == 'update' else ('audit-delete' if entry.action == 'delete' else '')) }}">
+            {{ entry.action }}
+        </span>
+        <span style="font-size:0.84rem;color:var(--text-secondary);">
+            {{ entry.username|default('') }} {{ entry.model_name|default('') }}
+        </span>
+        <span class="meta-text" style="margin-left:auto;">
+            {{ entry.timestamp|default('')|string|truncate(19, True, '') }}
+        </span>
+    </div>
+    {% endfor %}
 </div>
+{% else %}
+<div class="glass-card" style="margin-top:28px;">
+    <div class="empty-state">
+        <i class="icon-activity" style="font-size:32px;display:block;margin-bottom:12px;opacity:0.3;"></i>
+        No recent activity
+    </div>
+</div>
+{% endif %}
 {% endblock %}
