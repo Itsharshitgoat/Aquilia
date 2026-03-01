@@ -622,6 +622,14 @@ class WorkspaceGenerator:
                 #     metrics_enabled=True,
                 #     logging_enabled=True,
                 # )
+
+                # Admin Dashboard (uncomment to enable admin at /admin/)
+                # Requires: aq admin createsuperuser
+                # .integrate(Integration.admin(
+                #     url_prefix="/admin",
+                #     site_title="{self.name} Admin",
+                #     auto_discover=True,
+                # ))
             )
 
 

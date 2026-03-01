@@ -692,6 +692,29 @@ except ImportError:
     pass
 
 # ============================================================================
+# Admin System (AquilAdmin — Django-style auto-detecting admin)
+# ============================================================================
+
+from .admin import (
+    AdminSite,
+    ModelAdmin,
+    register,
+    autodiscover,
+    AdminController,
+    AdminPermission,
+    AdminRole,
+    AdminAuditLog,
+    AdminAction,
+    AdminFault,
+    AdminAuthenticationFault,
+    AdminAuthorizationFault,
+    AdminModelNotFoundFault,
+    AdminRecordNotFoundFault,
+    AdminValidationFault,
+    AdminActionFault,
+)
+
+# ============================================================================
 # Exports
 # ============================================================================
 
@@ -1141,4 +1164,22 @@ __all__ = [
     "TransactionTestCase",
     "LiveServerTestCase",
     "override_settings",
+
+    # Admin System (AquilAdmin)
+    "AdminSite",
+    "ModelAdmin",
+    "register",
+    "autodiscover",
+    "AdminController",
+    "AdminPermission",
+    "AdminRole",
+    "AdminAuditLog",
+    "AdminAction",
+    "AdminFault",
+    "AdminAuthenticationFault",
+    "AdminAuthorizationFault",
+    "AdminModelNotFoundFault",
+    "AdminRecordNotFoundFault",
+    "AdminValidationFault",
+    "AdminActionFault",
 ]

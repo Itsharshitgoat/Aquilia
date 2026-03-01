@@ -71,6 +71,7 @@ class AquiliaGroup(click.Group):
         "Develop": ["run", "validate", "compile", "test", "discover", "doctor"],
         "Production": ["serve", "freeze"],
         "Database": ["db"],
+        "Admin": ["admin"],
         "Inspect": ["inspect", "manifest", "analytics"],
         "Subsystems": ["ws", "cache", "mail"],
         "MLOps": ["pack", "model", "deploy", "observe", "export", "plugin", "lineage", "experiment"],
@@ -1513,6 +1514,168 @@ def test(ctx, paths: tuple, pattern: Optional[str], markers: Optional[str],
         markers=markers,
     )
     sys.exit(exit_code)
+
+
+# ============================================================================
+# Admin commands
+# ============================================================================
+
+@cli.group(cls=AquiliaGroup)
+def admin():
+    """Admin dashboard management."""
+    pass
+
+
+@admin.command('createsuperuser')
+@click.option('--username', prompt='Username', help='Admin username')
+@click.option('--password', prompt='Password', hide_input=True, confirmation_prompt=True, help='Admin password')
+@click.option('--email', prompt='Email', default='', help='Admin email (optional)')
+@click.pass_context
+def admin_createsuperuser(ctx, username: str, password: str, email: str):
+    """
+    Create an admin superuser.
+
+    Sets AQUILIA_ADMIN_USER and AQUILIA_ADMIN_PASSWORD environment
+    variables in the .env file for development mode.
+
+    Examples:
+      aq admin createsuperuser
+      aq admin createsuperuser --username=admin --password=secret
+    """
+    import os
+
+    env_file = Path('.env')
+    lines = []
+    if env_file.exists():
+        lines = env_file.read_text().splitlines()
+
+    # Remove existing admin entries
+    lines = [
+        ln for ln in lines
+        if not ln.startswith('AQUILIA_ADMIN_USER=')
+        and not ln.startswith('AQUILIA_ADMIN_PASSWORD=')
+        and not ln.startswith('AQUILIA_ADMIN_EMAIL=')
+    ]
+
+    lines.append(f'AQUILIA_ADMIN_USER={username}')
+    lines.append(f'AQUILIA_ADMIN_PASSWORD={password}')
+    if email:
+        lines.append(f'AQUILIA_ADMIN_EMAIL={email}')
+
+    env_file.write_text('\n'.join(lines) + '\n')
+
+    if not ctx.obj.get('quiet'):
+        click.echo()
+        success(f"  {_CHECK} Superuser '{username}' created")
+        click.echo()
+        section("Admin Setup")
+        kv("Username", username)
+        kv("Email", email or "(none)")
+        kv("Env File", str(env_file.resolve()))
+        click.echo()
+        next_steps([
+            "aq run",
+            f"Visit http://localhost:8000/admin/ and log in as '{username}'",
+        ])
+
+
+@admin.command('status')
+@click.option('--database-url', type=str, default=None, help='Database URL')
+@click.pass_context
+def admin_status(ctx, database_url: Optional[str]):
+    """
+    Show admin dashboard status and registered models.
+
+    Examples:
+      aq admin status
+    """
+    from aquilia.admin import AdminSite, autodiscover
+
+    if database_url is None:
+        database_url = _detect_workspace_db_url()
+
+    site = AdminSite.default()
+    site.initialize()
+    autodiscover()
+
+    if not ctx.obj.get('quiet'):
+        click.echo()
+        banner("AquilAdmin", subtitle="Dashboard Status")
+        click.echo()
+
+        section("Registered Models")
+        models = site.get_registered_models()
+        if models:
+            for model_name, admin_obj in sorted(models.items()):
+                admin_class_name = admin_obj.__class__.__name__
+                display_fields = ", ".join(admin_obj.get_list_display()[:5])
+                kv(f"  {model_name}", f"{admin_class_name}  fields=[{display_fields}]")
+        else:
+            info("  No models registered. Run autodiscover() in workspace.py")
+        click.echo()
+
+        section("Configuration")
+        import os
+        kv("Admin User", os.environ.get("AQUILIA_ADMIN_USER", "(not set)"))
+        kv("Dashboard URL", "/admin/")
+        kv("Audit Log", f"{site.audit_log.count()} entries")
+        click.echo()
+
+
+@admin.command('audit')
+@click.option('--limit', type=int, default=50, help='Number of entries to show')
+@click.option('--action', type=str, default=None, help='Filter by action type')
+@click.option('--user', type=str, default=None, help='Filter by username')
+@click.pass_context
+def admin_audit(ctx, limit: int, action: Optional[str], user: Optional[str]):
+    """
+    View admin audit trail.
+
+    Examples:
+      aq admin audit
+      aq admin audit --limit=100
+      aq admin audit --action=CREATE
+      aq admin audit --user=admin
+    """
+    from aquilia.admin import AdminSite, AdminAction
+
+    site = AdminSite.default()
+
+    filter_action = None
+    if action:
+        try:
+            filter_action = AdminAction(action.lower())
+        except ValueError:
+            error(f"  {_CROSS} Unknown action: {action}")
+            click.echo(f"  Valid actions: {', '.join(a.value for a in AdminAction)}")
+            sys.exit(1)
+
+    entries = site.audit_log.get_entries(
+        limit=limit,
+        action=filter_action,
+        user_id=user,
+    )
+
+    if not ctx.obj.get('quiet'):
+        click.echo()
+        section(f"Admin Audit Trail ({len(entries)} entries)")
+        click.echo()
+
+        if not entries:
+            info("  No audit entries found")
+        else:
+            for entry in entries:
+                ts = entry.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                status_icon = _CHECK if entry.success else _CROSS
+                model_info = f" on {entry.model_name}" if entry.model_name else ""
+                click.echo(
+                    f"  {dim(ts)}  {status_icon}  "
+                    f"{bold(entry.action.value.upper())}{model_info}  "
+                    f"by {accent(entry.username)}"
+                )
+                if entry.error_message:
+                    click.echo(f"           {error(entry.error_message)}")
+        click.echo()
 
 
 def main():
