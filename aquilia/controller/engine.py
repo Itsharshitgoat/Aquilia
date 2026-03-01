@@ -10,13 +10,19 @@ Integrates with:
 - Middleware for pipeline execution
 - Faults for error handling
 - Clearance system for declarative access control
+- Throttling / rate limiting
+- Interceptors (before/after handler)
+- Exception filters (structured error handling)
+- Handler execution timeouts
 """
 
 from typing import Any, Dict, Optional, List
+import asyncio
 import inspect
 import logging
+import time
 
-from .base import Controller, RequestCtx
+from .base import Controller, RequestCtx, ExceptionFilter, Interceptor, Throttle
 from .factory import ControllerFactory, InstantiationMode
 from .compiler import CompiledRoute
 from ..request import Request
@@ -36,6 +42,10 @@ class ControllerEngine:
     - Bind path/query/body parameters
     - Handle errors via faults system
     - Lifecycle management
+    - Throttle enforcement
+    - Interceptor before/after hooks
+    - Exception filter dispatch
+    - Handler execution timeouts
     """
     
     # Class-level caches shared across instances
@@ -76,6 +86,13 @@ class ControllerEngine:
         - Skip lifecycle init check for per-request controllers.
         - Build RequestCtx inline without extra method call for simple cases.
         - Cache inspect.signature results via _bind_parameters.
+
+        v3 additions:
+        - Throttle enforcement (class + route level)
+        - Interceptor before/after hooks
+        - Exception filter dispatch
+        - Handler execution timeouts
+        - Request body size limit enforcement
         """
         controller_class = route.controller_class
         route_metadata = route.route_metadata
@@ -99,6 +116,29 @@ class ControllerEngine:
             container=container,
             state=request.state,
         )
+
+        # ── Throttle enforcement ──
+        throttle_response = self._check_throttle(controller_class, route_metadata, request)
+        if throttle_response is not None:
+            return throttle_response
+
+        # ── Body size limit enforcement ──
+        max_body = getattr(controller_class, 'max_body_size', 0)
+        if max_body > 0:
+            content_length = 0
+            if hasattr(request, 'headers'):
+                hdrs = request.headers
+                cl = hdrs.get("content-length") if hasattr(hdrs, "get") else None
+                if cl:
+                    try:
+                        content_length = int(cl)
+                    except (ValueError, TypeError):
+                        pass
+            if content_length > max_body:
+                return Response.json(
+                    {"error": "Request body too large", "max_bytes": max_body},
+                    status=413,
+                )
 
         # Singleton lifecycle init (once per controller class)
         is_singleton = getattr(controller_class, "instantiation_mode", "per_request") == "singleton"
@@ -187,9 +227,28 @@ class ControllerEngine:
                     ctx_key = "ctx" if "ctx" in sig.parameters else "context"
                     final_kwargs[ctx_key] = ctx
                 
-                result = await self._safe_call(handler_method, **final_kwargs)
+                # Run interceptors before
+                interceptors = self._get_interceptors(controller_class, route_metadata)
+                for interceptor in interceptors:
+                    short = await self._safe_call(interceptor.before, ctx)
+                    if isinstance(short, Response):
+                        return short
+                
+                result = await self._execute_with_timeout(
+                    handler_method, controller_class, route_metadata, **final_kwargs
+                )
+                
+                # Run interceptors after
+                for interceptor in reversed(interceptors):
+                    result = await self._safe_call(interceptor.after, ctx, result)
+                
                 return self._to_response(result)
             except Exception as e:
+                # Try exception filters first
+                filtered = await self._apply_exception_filters(e, controller_class, route_metadata, ctx)
+                if filtered is not None:
+                    return filtered
+                
                 self.logger.error(
                     f"Error executing {controller_class.__name__}.{route_metadata.handler_name}: {e}",
                     exc_info=True,
@@ -235,6 +294,13 @@ class ControllerEngine:
             if has_on_request:
                 await self._safe_call(controller.on_request, ctx)
 
+            # Run interceptors before handler
+            interceptors = self._get_interceptors(controller_class, route_metadata)
+            for interceptor in interceptors:
+                short = await self._safe_call(interceptor.before, ctx)
+                if isinstance(short, Response):
+                    return short
+
             # Signature-aware call
             sig = self._get_cached_signature(handler_method)
             has_ctx = "ctx" in sig.parameters or "context" in sig.parameters
@@ -242,7 +308,14 @@ class ControllerEngine:
                 ctx_key = "ctx" if "ctx" in sig.parameters else "context"
                 kwargs[ctx_key] = ctx
 
-            result = await self._safe_call(handler_method, **kwargs)
+            result = await self._execute_with_timeout(
+                handler_method, controller_class, route_metadata, **kwargs
+            )
+
+            # Run interceptors after handler (in reverse order)
+            for interceptor in reversed(interceptors):
+                result = await self._safe_call(interceptor.after, ctx, result)
+
             result = await self._apply_filters_and_pagination(result, route_metadata, request)
             result = self._apply_response_blueprint(result, route_metadata, ctx)
             response = self._apply_content_negotiation(result, route_metadata, request)
@@ -255,6 +328,11 @@ class ControllerEngine:
             return response
 
         except Exception as e:
+            # Try exception filters first
+            filtered = await self._apply_exception_filters(e, controller_class, route_metadata, ctx)
+            if filtered is not None:
+                return filtered
+
             self.logger.error(
                 f"Error executing {controller_class.__name__}.{route_metadata.handler_name}: {e}",
                 exc_info=True,
@@ -317,7 +395,14 @@ class ControllerEngine:
         
         if hasattr(temp_instance, "on_shutdown"):
             try:
-                await self._safe_call(temp_instance.on_shutdown)
+                # Build a minimal context for shutdown (consistent with on_startup)
+                from ..request import Request as RequestClass
+                dummy_request = RequestClass(
+                    scope={"type": "http", "method": "GET", "path": "/", "query_string": b"", "headers": []},
+                    receive=lambda: None,
+                )
+                ctx = RequestCtx(request=dummy_request, identity=None, session=None, container=container, state={})
+                await self._safe_call(temp_instance.on_shutdown, ctx)
                 self.logger.info(f"Executed on_shutdown for {controller_class.__name__}")
             except Exception as e:
                 self.logger.error(
@@ -389,74 +474,6 @@ class ControllerEngine:
         
         return None
     
-    async def _build_request_context(
-        self,
-        request: Request,
-        container: Container,
-    ) -> RequestCtx:
-        """Build RequestCtx with auth, session, and state."""
-        identity = request.state.get("identity")
-        session = request.state.get("session")
-
-        # Only do DI fallback if middleware didn't set identity/session
-        if identity is None:
-            try:
-                identity = await container.resolve_async("identity", optional=True)
-            except Exception:
-                pass
-
-        if session is None:
-            try:
-                session = await container.resolve_async("session", optional=True)
-            except Exception:
-                pass
-
-        return RequestCtx(
-            request=request,
-            identity=identity,
-            session=session,
-            container=container,
-            state=request.state,
-        )
-    
-    async def _execute_pipeline_node(
-        self,
-        pipeline_node: Any,
-        request: Request,
-        ctx: RequestCtx,
-        controller: Controller,
-    ) -> Optional[Response]:
-        """Execute a pipeline node (middleware/guard) with cached signatures."""
-        if not callable(pipeline_node):
-            return None
-
-        # Cache parameter names by id of callable
-        node_id = id(pipeline_node)
-        param_names = self._pipeline_param_cache.get(node_id)
-        if param_names is None:
-            sig = inspect.signature(pipeline_node)
-            param_names = set(sig.parameters.keys())
-            self._pipeline_param_cache[node_id] = param_names
-
-        kwargs = {}
-        if "request" in param_names or "req" in param_names:
-            key = "request" if "request" in param_names else "req"
-            kwargs[key] = request
-        if "ctx" in param_names or "context" in param_names:
-            key = "ctx" if "ctx" in param_names else "context"
-            kwargs[key] = ctx
-        if "controller" in param_names:
-            kwargs["controller"] = controller
-
-        result = await self._safe_call(pipeline_node, **kwargs)
-
-        if result is False:
-            return Response.json({"error": "Pipeline guard failed"}, status=403)
-        elif isinstance(result, Response):
-            return result
-
-        return None
-
     async def _execute_flow_pipeline(
         self,
         pipeline_list: List[Any],
@@ -1092,6 +1109,134 @@ class ControllerEngine:
             if inspect.isawaitable(result):
                 return await result
             return result
+
+    # ── Throttle ─────────────────────────────────────────────────────
+
+    def _check_throttle(
+        self,
+        controller_class: type,
+        route_metadata: Any,
+        request: Request,
+    ) -> Optional[Response]:
+        """
+        Check rate limits at controller and route level.
+
+        Returns a 429 Response if throttled, None if allowed.
+        """
+        # Route-level throttle takes precedence
+        route_throttle = getattr(route_metadata, '_raw_metadata', {}).get('throttle') if hasattr(route_metadata, '_raw_metadata') else None
+        if route_throttle is None:
+            route_throttle = getattr(route_metadata, 'throttle', None)
+        class_throttle = getattr(controller_class, 'throttle', None)
+
+        throttle = route_throttle or class_throttle
+        if throttle is None:
+            return None
+
+        if not throttle.check(request):
+            return Response.json(
+                {"error": "Too many requests", "retry_after": throttle.retry_after},
+                status=429,
+                headers={"Retry-After": str(throttle.retry_after)},
+            )
+        return None
+
+    # ── Interceptors ─────────────────────────────────────────────────
+
+    def _get_interceptors(
+        self,
+        controller_class: type,
+        route_metadata: Any,
+    ) -> List[Any]:
+        """
+        Collect interceptors from the controller class.
+
+        Returns a list of Interceptor instances.
+        """
+        return getattr(controller_class, 'interceptors', []) or []
+
+    # ── Exception Filters ────────────────────────────────────────────
+
+    async def _apply_exception_filters(
+        self,
+        exception: Exception,
+        controller_class: type,
+        route_metadata: Any,
+        ctx: RequestCtx,
+    ) -> Optional[Response]:
+        """
+        Try to handle an exception through exception filters.
+
+        Returns a Response if handled, None if the exception should propagate.
+        """
+        filters = getattr(controller_class, 'exception_filters', []) or []
+        exc_type = type(exception)
+
+        for ef in filters:
+            catches = getattr(ef, 'catches', [])
+            if not catches or any(issubclass(exc_type, c) for c in catches):
+                try:
+                    result = await self._safe_call(ef.catch, exception, ctx)
+                    if isinstance(result, Response):
+                        return result
+                except Exception:
+                    # If filter itself fails, continue to next
+                    pass
+
+        return None
+
+    # ── Timeout ──────────────────────────────────────────────────────
+
+    async def _execute_with_timeout(
+        self,
+        handler: Any,
+        controller_class: type,
+        route_metadata: Any,
+        **kwargs,
+    ) -> Any:
+        """
+        Execute handler with optional timeout.
+
+        Route-level timeout takes precedence over class-level.
+        """
+        # Route-level timeout
+        route_timeout = getattr(route_metadata, '_raw_metadata', {}).get('timeout') if hasattr(route_metadata, '_raw_metadata') else None
+        if route_timeout is None:
+            route_timeout = getattr(route_metadata, 'timeout', None)
+        class_timeout = getattr(controller_class, 'timeout', 0)
+
+        timeout = route_timeout if route_timeout is not None else class_timeout
+
+        if timeout and timeout > 0:
+            try:
+                return await asyncio.wait_for(
+                    self._safe_call(handler, **kwargs),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                raise TimeoutError(
+                    f"Handler {controller_class.__name__}.{handler.__name__} "
+                    f"timed out after {timeout}s"
+                )
+        else:
+            return await self._safe_call(handler, **kwargs)
+
+    # ── Cache Management ─────────────────────────────────────────────
+
+    @classmethod
+    def clear_caches(cls):
+        """
+        Clear all class-level caches.
+
+        Call during testing teardown or hot-reload to prevent stale state
+        and memory leaks in long-running applications.
+        """
+        cls._signature_cache.clear()
+        cls._pipeline_param_cache.clear()
+        cls._has_lifecycle_hooks.clear()
+        cls._simple_route_cache.clear()
+        cls._clearance_cache.clear()
+        cls._is_coro_cache.clear()
     
     def _to_response(self, result: Any) -> Response:
         """Convert handler result to Response."""
