@@ -276,27 +276,8 @@ def cmd_makemigrations(
             )
             return []
 
-        # Optionally write CROUS-format snapshot alongside the Python migration
-        if migration_format == "crous":
-            try:
-                import crous
-                from aquilia.models.schema_snapshot import create_snapshot
-                snap = create_snapshot(models)
-                crous_snap_path = Path(migrations_dir) / "schema_snapshot.crous"
-                crous.dump(snap, str(crous_snap_path))
-                click.echo(
-                    click.style(
-                        f"  CROUS snapshot: {crous_snap_path}",
-                        dim=True,
-                    )
-                )
-            except ImportError:
-                # crous not installed — fall back to JSON snapshot only
-                if verbose:
-                    click.echo(click.style("  (crous not installed, using JSON snapshot)", dim=True))
-            except Exception as e:
-                if verbose:
-                    click.echo(click.style(f"  (crous snapshot failed: {e})", dim=True))
+        # CROUS snapshot is now saved by default within generate_dsl_migration
+        # No need to write a separate JSON snapshot
 
         model_names = ", ".join(m.__name__ for m in models)
         click.echo(
@@ -306,7 +287,7 @@ def cmd_makemigrations(
                 fg="green",
             )
         )
-        snap_path = Path(migrations_dir) / "schema_snapshot.json"
+        snap_path = Path(migrations_dir) / "schema_snapshot.crous"
         click.echo(
             click.style(
                 f"  Schema snapshot: {snap_path}",

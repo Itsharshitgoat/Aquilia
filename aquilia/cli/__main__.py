@@ -1618,49 +1618,27 @@ def admin_createsuperuser(ctx, username: str, password: str, email: str):
             db = None
 
         try:
-            from aquilia.admin.models import AdminUser, _hash_password
+            from aquilia.admin.models import AdminUser
 
-            if db is not None:
-                # ORM-based creation (preferred)
-                try:
-                    user = await AdminUser.create_superuser(
-                        username=username,
-                        password=password,
-                        email=email,
-                    )
-                    return True, str(getattr(user, 'pk', '?'))
-                except Exception as e:
-                    # Table might not exist yet — create it
-                    try:
-                        await db.execute(
-                            """CREATE TABLE IF NOT EXISTS admin_users (
-                                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                username VARCHAR(150) UNIQUE NOT NULL,
-                                email VARCHAR(254) DEFAULT '',
-                                password_hash TEXT NOT NULL,
-                                is_superuser BOOLEAN DEFAULT 0,
-                                is_staff BOOLEAN DEFAULT 1,
-                                is_active BOOLEAN DEFAULT 1,
-                                first_name VARCHAR(150) DEFAULT '',
-                                last_name VARCHAR(150) DEFAULT '',
-                                last_login TIMESTAMP,
-                                date_joined TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                            )"""
-                        )
-                        hashed = _hash_password(password)
-                        await db.execute(
-                            """INSERT INTO admin_users (username, email, password_hash, is_superuser, is_staff, is_active)
-                               VALUES (?, ?, ?, 1, 1, 1)""",
-                            [username, email, hashed],
-                        )
-                        return True, "direct-insert"
-                    except Exception as e2:
-                        raise RuntimeError(f"Failed to create superuser: {e2}") from e
-            else:
+            if db is None:
                 raise RuntimeError(
                     "No database connection available. "
                     "Run 'aq db migrate' first to set up the database."
                 )
+
+            # ORM-based creation — requires tables to already exist via `aq db migrate`
+            try:
+                user = await AdminUser.create_superuser(
+                    username=username,
+                    password=password,
+                    email=email,
+                )
+                return True, str(getattr(user, 'pk', '?'))
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to create superuser: {e}\n"
+                    "Ensure 'aq db makemigrations' and 'aq db migrate' have been run first."
+                ) from e
         finally:
             if db is not None:
                 try:

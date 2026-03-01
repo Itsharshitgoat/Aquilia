@@ -70,7 +70,22 @@ from .registry import register, autodiscover
 from .permissions import AdminPermission, AdminRole
 from .audit import AdminAuditLog, AdminAction
 from .controller import AdminController
-from .models import AdminUser
+from .models import (
+    AdminUser,
+    AdminGroup,
+    AdminPermission as AdminPermissionModel,
+    ContentType,
+    AdminLogEntry,
+    AdminSession,
+)
+from .blueprints import (
+    AdminUserBlueprint,
+    AdminGroupBlueprint,
+    AdminPermissionBlueprint,
+    ContentTypeBlueprint,
+    AdminLogEntryBlueprint,
+    AdminSessionBlueprint,
+)
 from .faults import (
     AdminFault,
     AdminAuthenticationFault,
@@ -103,6 +118,19 @@ __all__ = [
     
     # Models
     "AdminUser",
+    "AdminGroup",
+    "AdminPermissionModel",
+    "ContentType",
+    "AdminLogEntry",
+    "AdminSession",
+    
+    # Blueprints
+    "AdminUserBlueprint",
+    "AdminGroupBlueprint",
+    "AdminPermissionBlueprint",
+    "ContentTypeBlueprint",
+    "AdminLogEntryBlueprint",
+    "AdminSessionBlueprint",
     
     # Faults
     "AdminFault",

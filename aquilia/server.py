@@ -1537,6 +1537,96 @@ class AquiliaServer:
             f"{openapi_config.openapi_json_path} (JSON)"
         )
 
+    def _wire_admin_integration(self):
+        """
+        Wire the AdminController routes into the controller router.
+
+        Reads the admin integration config from ``self.config["integrations"]["admin"]``
+        and mounts all AdminController routes using the same CompiledRoute injection
+        pattern as ``_register_docs_routes()``.
+
+        This is the critical bridge between ``Workspace.integrate(Integration.admin(...))``
+        and actual HTTP route serving.
+        """
+        admin_config = self.config.get("integrations", {}).get("admin", {})
+        if not admin_config:
+            return
+
+        url_prefix = admin_config.get("url_prefix", "/admin").rstrip("/")
+        site_title = admin_config.get("site_title", "Aquilia Admin")
+        auto_discover = admin_config.get("auto_discover", True)
+
+        try:
+            from .admin.controller import AdminController
+            from .admin.site import AdminSite
+            from .controller.metadata import RouteMetadata
+            from .controller.compiler import CompiledRoute
+            from .patterns import parse_pattern, PatternCompiler
+
+            pc = PatternCompiler()
+
+            # Configure the AdminSite singleton
+            site = AdminSite.default()
+            site.title = site_title
+            site.url_prefix = url_prefix
+            if auto_discover:
+                site.initialize()
+
+            # Create a controller instance
+            ctrl = AdminController(site=site)
+
+            # Define all admin routes: (method, path, handler_name, handler_func)
+            admin_routes = [
+                ("GET",  f"{url_prefix}/",                  "dashboard",      ctrl.dashboard),
+                ("GET",  f"{url_prefix}/login",             "login_page",     ctrl.login_page),
+                ("POST", f"{url_prefix}/login",             "login_submit",   ctrl.login_submit),
+                ("GET",  f"{url_prefix}/logout",            "logout",         ctrl.logout),
+                ("GET",  f"{url_prefix}/audit/",            "audit_view",     ctrl.audit_view),
+                ("GET",  f"{url_prefix}/<model:str>/",      "list_view",      ctrl.list_view),
+                ("GET",  f"{url_prefix}/<model:str>/add",   "add_form",       ctrl.add_form),
+                ("POST", f"{url_prefix}/<model:str>/add",   "add_submit",     ctrl.add_submit),
+                ("GET",  f"{url_prefix}/<model:str>/<pk:str>",        "edit_form",      ctrl.edit_form),
+                ("POST", f"{url_prefix}/<model:str>/<pk:str>",        "edit_submit",    ctrl.edit_submit),
+                ("POST", f"{url_prefix}/<model:str>/<pk:str>/delete", "delete_record",  ctrl.delete_record),
+            ]
+
+            registered_count = 0
+            for method, path, handler_name, handler_func in admin_routes:
+                try:
+                    route = CompiledRoute(
+                        controller_class=AdminController,
+                        controller_metadata=None,
+                        route_metadata=RouteMetadata(
+                            http_method=method,
+                            path_template=path,
+                            full_path=path,
+                            handler_name=handler_name,
+                        ),
+                        compiled_pattern=pc.compile(parse_pattern(path)),
+                        full_path=path,
+                        http_method=method,
+                        specificity=1000,
+                    )
+                    route.handler = handler_func
+                    self.controller_router.routes_by_method.setdefault(method, []).append(route)
+                    registered_count += 1
+                except Exception as e:
+                    self.logger.warning(f"Failed to register admin route {method} {path}: {e}")
+
+            # Re-initialize the router to rebuild indexes
+            self.controller_router._initialized = False
+            self.controller_router.initialize()
+
+            self.logger.info(
+                f"🛡️  Admin integration wired: {registered_count} routes at {url_prefix}/ "
+                f"(site: {site_title!r})"
+            )
+
+        except ImportError as e:
+            self.logger.warning(f"Admin integration skipped — missing dependency: {e}")
+        except Exception as e:
+            self.logger.error(f"Admin integration failed: {e}", exc_info=True)
+
     async def _load_socket_controllers(self):
         """Load and register WebSocket controllers."""
         from .sockets.runtime import RouteMetadata
@@ -2164,6 +2254,11 @@ class AquiliaServer:
             _t0 = _time.monotonic()
             await self._load_controllers()
             self.logger.debug(f"Controllers loaded in {(_time.monotonic() - _t0) * 1000:.1f}ms")
+
+            # Step 1.5: Wire admin integration (if configured)
+            _t0 = _time.monotonic()
+            self._wire_admin_integration()
+            self.logger.debug(f"Admin integration in {(_time.monotonic() - _t0) * 1000:.1f}ms")
         
             # Step 2: Compile routes (includes service registration and handler wrapping)
             self.logger.info("Compiling routes with DI integration...")
