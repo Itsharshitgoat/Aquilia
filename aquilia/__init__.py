@@ -221,6 +221,40 @@ from .auth.integration.flow_guards import (
     require_permission,
 )
 
+# Clearance System (Unique Aquilia declarative access control)
+from .auth.clearance import (
+    AccessLevel,
+    Clearance,
+    ClearanceVerdict,
+    ClearanceEngine,
+    ClearanceGuard,
+    grant,
+    exempt,
+    is_verified,
+    is_owner_or_admin,
+    within_quota,
+    is_same_tenant,
+)
+
+# Audit Trail
+from .auth.audit import (
+    AuditEventType,
+    AuditSeverity,
+    AuditEvent,
+    AuditTrail,
+    MemoryAuditStore,
+)
+
+# Security Hardening
+from .auth.hardening import (
+    CSRFProtection,
+    RequestFingerprint,
+    SecurityHeaders,
+    TokenBinder,
+    constant_time_compare,
+    generate_secure_token,
+)
+
 # ============================================================================
 # Cache System
 # ============================================================================

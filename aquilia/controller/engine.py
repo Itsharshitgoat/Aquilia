@@ -9,6 +9,7 @@ Integrates with:
 - Effect system for automatic effect lifecycle
 - Middleware for pipeline execution
 - Faults for error handling
+- Clearance system for declarative access control
 """
 
 from typing import Any, Dict, Optional, List
@@ -42,6 +43,7 @@ class ControllerEngine:
     _pipeline_param_cache: Dict[int, set] = {}  # id(callable) -> set of param names
     _has_lifecycle_hooks: Dict[type, tuple] = {}  # class -> (has_on_request, has_on_response)
     _simple_route_cache: Dict[int, bool] = {}  # id(route) -> is_simple
+    _clearance_cache: Dict[int, Any] = {}  # id(route) -> merged Clearance or None
     
     def __init__(
         self,
@@ -49,11 +51,13 @@ class ControllerEngine:
         enable_lifecycle: bool = True,
         fault_engine: Optional[Any] = None,
         effect_registry: Optional[Any] = None,
+        clearance_engine: Optional[Any] = None,
     ):
         self.factory = factory
         self.enable_lifecycle = enable_lifecycle
         self.fault_engine = fault_engine
         self.effect_registry = effect_registry
+        self.clearance_engine = clearance_engine
         self.logger = logging.getLogger("aquilia.controller.engine")
         self._lifecycle_initialized: set[type] = set()
     
@@ -132,6 +136,14 @@ class ControllerEngine:
 
         # Get handler method
         handler_method = getattr(controller, route_metadata.handler_name)
+
+        # ── Clearance evaluation ──
+        # Check class-level + method-level clearance requirements
+        clearance_result = await self._evaluate_clearance(
+            route, controller_class, handler_method, request, ctx,
+        )
+        if isinstance(clearance_result, Response):
+            return clearance_result
 
         # ── Fast path for simple handlers ──
         # Handlers with no pipeline, no blueprint, and only ctx/path params
@@ -314,6 +326,68 @@ class ControllerEngine:
                 )
         
         self._lifecycle_initialized.discard(controller_class)
+    
+    async def _evaluate_clearance(
+        self,
+        route: CompiledRoute,
+        controller_class: type,
+        handler_method: Any,
+        request: Request,
+        ctx: RequestCtx,
+    ) -> Optional[Response]:
+        """
+        Evaluate clearance requirements for a controller route.
+        
+        Merges class-level and method-level clearance descriptors,
+        then evaluates the merged clearance against the request context.
+        
+        Returns a 401/403 Response if denied, None if allowed.
+        """
+        from ..auth.clearance import (
+            build_merged_clearance,
+            ClearanceEngine,
+            AccessLevel,
+        )
+        
+        # Cache clearance per route
+        route_id = id(route)
+        cached = ControllerEngine._clearance_cache.get(route_id)
+        if cached is ...:  # Sentinel: already checked, no clearance
+            return None
+        
+        if cached is None:
+            merged = build_merged_clearance(controller_class, handler_method)
+            if merged is None:
+                ControllerEngine._clearance_cache[route_id] = ...
+                return None
+            ControllerEngine._clearance_cache[route_id] = merged
+            cached = merged
+        
+        # Use configured engine or create one
+        engine = self.clearance_engine or ClearanceEngine()
+        
+        identity = ctx.identity
+        verdict = await engine.evaluate(cached, identity, request, ctx)
+        
+        if not verdict.granted:
+            status = 401 if not verdict.level_ok and cached.level > AccessLevel.PUBLIC else 403
+            return Response.json(
+                {
+                    "error": {
+                        "code": "CLEARANCE_DENIED",
+                        "message": verdict.message,
+                        "missing_entitlements": list(verdict.missing_entitlements),
+                        "failed_conditions": list(verdict.failed_conditions),
+                    }
+                },
+                status=status,
+            )
+        
+        # Store verdict in ctx for downstream use
+        if isinstance(ctx.state, dict):
+            ctx.state["clearance_verdict"] = verdict
+        
+        return None
     
     async def _build_request_context(
         self,
