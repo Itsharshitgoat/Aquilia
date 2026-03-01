@@ -1607,3 +1607,274 @@ class TestWarningBoxIsYellow:
         warn_msg = server.logger.warning.call_args[0][0]
         assert "aq admin setup" in warn_msg, "Warning must mention 'aq admin setup'"
         assert "aq admin check" in warn_msg, "Warning must mention 'aq admin check'"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 15. DEV-MODE COOKIE SECURE OVERRIDE TESTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDevModeCookieSecureOverride:
+    """
+    Verify that _should_disable_secure_cookies() and _apply_dev_cookie_override()
+    correctly detect dev mode and force cookie_secure=False so session cookies
+    work over plain HTTP (e.g. http://localhost:8000).
+
+    Root cause: TransportPolicy.cookie_secure defaults to True, causing browsers
+    to silently refuse sending cookies on HTTP, which creates an admin login
+    redirect loop.
+    """
+
+    def _make_server(self, *, debug=False, env_vars=None, config_overrides=None):
+        """Create a minimal mock AquiliaServer for testing."""
+        from aquilia.server import AquiliaServer
+        from unittest.mock import MagicMock
+        import logging
+
+        server = MagicMock(spec=AquiliaServer)
+        server.logger = MagicMock(spec=logging.Logger)
+
+        # Wire up config
+        cfg = config_overrides or {}
+        if debug:
+            cfg["debug"] = True
+        server.config = MagicMock()
+        server.config.get = lambda key, default="": cfg.get(key, default)
+
+        # Wire up real methods
+        server._is_debug = lambda: AquiliaServer._is_debug(server)
+        server._should_disable_secure_cookies = lambda: AquiliaServer._should_disable_secure_cookies(server)
+        server._apply_dev_cookie_override = lambda t: AquiliaServer._apply_dev_cookie_override(server, t)
+
+        # Optionally set env vars
+        if env_vars:
+            for k, v in env_vars.items():
+                os.environ[k] = v
+
+        return server
+
+    def _cleanup_env(self, keys):
+        for k in keys:
+            os.environ.pop(k, None)
+
+    # ── _should_disable_secure_cookies ───────────────────────────────
+
+    def test_debug_mode_disables_secure(self):
+        """When debug=True, should disable secure cookies."""
+        server = self._make_server(debug=True)
+        assert server._should_disable_secure_cookies() is True
+
+    def test_aquilia_env_dev_disables_secure(self):
+        """When AQUILIA_ENV=dev, should disable secure cookies."""
+        try:
+            server = self._make_server(env_vars={"AQUILIA_ENV": "dev"})
+            assert server._should_disable_secure_cookies() is True
+        finally:
+            self._cleanup_env(["AQUILIA_ENV"])
+
+    def test_aquilia_env_development_disables_secure(self):
+        """When AQUILIA_ENV=development, should disable secure cookies."""
+        try:
+            server = self._make_server(env_vars={"AQUILIA_ENV": "development"})
+            assert server._should_disable_secure_cookies() is True
+        finally:
+            self._cleanup_env(["AQUILIA_ENV"])
+
+    def test_aquilia_env_test_disables_secure(self):
+        """When AQUILIA_ENV=test, should disable secure cookies."""
+        try:
+            server = self._make_server(env_vars={"AQUILIA_ENV": "test"})
+            assert server._should_disable_secure_cookies() is True
+        finally:
+            self._cleanup_env(["AQUILIA_ENV"])
+
+    def test_localhost_host_disables_secure(self):
+        """When host is localhost, should disable secure cookies."""
+        server = self._make_server(config_overrides={"server.host": "localhost"})
+        assert server._should_disable_secure_cookies() is True
+
+    def test_127_host_disables_secure(self):
+        """When host is 127.0.0.1, should disable secure cookies."""
+        server = self._make_server(config_overrides={"server.host": "127.0.0.1"})
+        assert server._should_disable_secure_cookies() is True
+
+    def test_0000_host_disables_secure(self):
+        """When host is 0.0.0.0, should disable secure cookies."""
+        server = self._make_server(config_overrides={"server.host": "0.0.0.0"})
+        assert server._should_disable_secure_cookies() is True
+
+    def test_production_does_not_disable_secure(self):
+        """In production (no debug, AQUILIA_ENV=production), keep secure."""
+        try:
+            server = self._make_server(
+                env_vars={"AQUILIA_ENV": "production"},
+                config_overrides={"server.host": "api.example.com"},
+            )
+            assert server._should_disable_secure_cookies() is False
+        finally:
+            self._cleanup_env(["AQUILIA_ENV"])
+
+    def test_mode_dev_config_disables_secure(self):
+        """When config has mode: dev, should disable secure cookies."""
+        server = self._make_server(config_overrides={"mode": "dev"})
+        assert server._should_disable_secure_cookies() is True
+
+    # ── _apply_dev_cookie_override ───────────────────────────────────
+
+    def test_apply_override_patches_cookie_secure(self):
+        """_apply_dev_cookie_override should set cookie_secure=False on transport policy."""
+        from aquilia.sessions.policy import TransportPolicy
+        from aquilia.sessions.transport import CookieTransport
+
+        server = self._make_server(debug=True)
+        policy = TransportPolicy(cookie_secure=True)
+        transport = CookieTransport(policy)
+
+        assert policy.cookie_secure is True
+        server._apply_dev_cookie_override(transport)
+        assert policy.cookie_secure is False
+
+    def test_apply_override_no_op_when_already_false(self):
+        """If cookie_secure is already False, _apply_dev_cookie_override is a no-op."""
+        from aquilia.sessions.policy import TransportPolicy
+        from aquilia.sessions.transport import CookieTransport
+
+        server = self._make_server(debug=True)
+        policy = TransportPolicy(cookie_secure=False)
+        transport = CookieTransport(policy)
+
+        server._apply_dev_cookie_override(transport)
+        assert policy.cookie_secure is False
+        # Logger should NOT log anything since it was already False
+        server.logger.info.assert_not_called()
+
+    def test_apply_override_no_op_in_production(self):
+        """In production mode, _apply_dev_cookie_override should NOT patch."""
+        from aquilia.sessions.policy import TransportPolicy
+        from aquilia.sessions.transport import CookieTransport
+
+        try:
+            server = self._make_server(
+                env_vars={"AQUILIA_ENV": "production"},
+                config_overrides={"server.host": "api.example.com"},
+            )
+            policy = TransportPolicy(cookie_secure=True)
+            transport = CookieTransport(policy)
+
+            server._apply_dev_cookie_override(transport)
+            assert policy.cookie_secure is True  # unchanged
+        finally:
+            self._cleanup_env(["AQUILIA_ENV"])
+
+    def test_apply_override_logs_when_patching(self):
+        """When patching cookie_secure, should log an info message."""
+        from aquilia.sessions.policy import TransportPolicy
+        from aquilia.sessions.transport import CookieTransport
+
+        server = self._make_server(debug=True)
+        policy = TransportPolicy(cookie_secure=True)
+        transport = CookieTransport(policy)
+
+        server._apply_dev_cookie_override(transport)
+
+        server.logger.info.assert_called_once()
+        log_msg = server.logger.info.call_args[0][0]
+        assert "cookie_secure=False" in log_msg
+        assert "Dev mode" in log_msg
+
+
+class TestTransportPolicyDefault:
+    """Verify TransportPolicy defaults and that the override mechanism works."""
+
+    def test_transport_policy_default_cookie_secure_is_true(self):
+        """TransportPolicy.cookie_secure should default to True (secure by default)."""
+        from aquilia.sessions.policy import TransportPolicy
+        policy = TransportPolicy()
+        assert policy.cookie_secure is True
+
+    def test_session_policy_inherits_default_transport(self):
+        """SessionPolicy without explicit transport should get TransportPolicy() defaults."""
+        from aquilia.sessions.policy import SessionPolicy, TransportPolicy
+        from datetime import timedelta
+
+        sp = SessionPolicy(
+            name="test",
+            ttl=timedelta(hours=1),
+            idle_timeout=timedelta(minutes=30),
+        )
+        assert sp.transport is not None
+        assert isinstance(sp.transport, TransportPolicy)
+        assert sp.transport.cookie_secure is True
+
+    def test_session_policy_with_explicit_transport_override(self):
+        """SessionPolicy with explicit TransportPolicy(cookie_secure=False) should keep it."""
+        from aquilia.sessions.policy import SessionPolicy, TransportPolicy
+        from datetime import timedelta
+
+        tp = TransportPolicy(cookie_secure=False, cookie_name="test_cookie")
+        sp = SessionPolicy(
+            name="test",
+            ttl=timedelta(hours=1),
+            idle_timeout=timedelta(minutes=30),
+            transport=tp,
+        )
+        assert sp.transport.cookie_secure is False
+        assert sp.transport.cookie_name == "test_cookie"
+
+
+class TestTransportPolicyExport:
+    """Verify TransportPolicy is properly exported from aquilia package."""
+
+    def test_transport_policy_importable_from_sessions(self):
+        """TransportPolicy should be importable from aquilia.sessions."""
+        from aquilia.sessions import TransportPolicy
+        assert TransportPolicy is not None
+
+    def test_transport_policy_importable_from_aquilia(self):
+        """TransportPolicy should be importable from aquilia top-level."""
+        from aquilia import TransportPolicy
+        assert TransportPolicy is not None
+
+
+class TestAdminSetupInjectsTransportPolicy:
+    """Verify that 'aq admin setup' injects TransportPolicy with cookie_secure=False."""
+
+    def test_setup_sessions_block_contains_transport_policy(self):
+        """The injected sessions block must include TransportPolicy config."""
+        import textwrap
+
+        # Replicate what the CLI injects
+        sessions_block = textwrap.dedent("""\
+
+    # Sessions - required for admin login
+    .sessions(
+        policies=[
+            SessionPolicy(
+                name="default",
+                ttl=timedelta(days=7),
+                idle_timeout=timedelta(hours=1),
+                transport=TransportPolicy(
+                    cookie_name="aquilia_admin_session",
+                    cookie_secure=False,
+                    cookie_httponly=True,
+                    cookie_samesite="lax",
+                ),
+            ),
+        ],
+    )""")
+        assert "TransportPolicy(" in sessions_block
+        assert "cookie_secure=False" in sessions_block
+        assert "cookie_httponly=True" in sessions_block
+        assert 'cookie_samesite="lax"' in sessions_block
+        assert 'cookie_name="aquilia_admin_session"' in sessions_block
+
+    def test_setup_check_panel_shows_transport_policy(self):
+        """The admin check hint panel must show TransportPolicy config."""
+        from aquilia.cli.__main__ import admin_check
+        import inspect
+
+        # admin_check is a Click Command, get the underlying callback
+        callback = admin_check.callback
+        source = inspect.getsource(callback)
+        assert "TransportPolicy(" in source
+        assert "cookie_secure=False" in source

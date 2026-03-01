@@ -1043,6 +1043,63 @@ class AquiliaServer:
             )
             return CookieTransport(transport_policy)
     
+    def _should_disable_secure_cookies(self) -> bool:
+        """
+        Detect whether ``cookie_secure`` should be forced to ``False``.
+
+        When running in dev mode on plain HTTP (e.g. ``http://localhost:8000``),
+        browsers silently refuse to send cookies marked ``Secure``.  This causes
+        session-based features (admin login, auth) to loop endlessly.
+
+        We disable ``Secure`` when ANY of these conditions is true:
+
+        * ``self._is_debug()`` returns True (dev mode)
+        * ``AQUILIA_ENV`` is ``"dev"`` or ``"development"``
+        * The server config has ``mode: dev`` or ``server.mode: dev``
+        * The configured host is ``127.0.0.1`` or ``localhost``
+        """
+        import os
+
+        if self._is_debug():
+            return True
+
+        env = os.environ.get("AQUILIA_ENV", "").lower()
+        if env in ("dev", "development", "test"):
+            return True
+
+        mode = self.config.get("mode", self.config.get("server.mode", ""))
+        if isinstance(mode, str) and mode.lower() in ("dev", "development", "test"):
+            return True
+
+        host = self.config.get("server.host", self.config.get("host", ""))
+        if isinstance(host, str) and host in ("127.0.0.1", "localhost", "0.0.0.0"):
+            return True
+
+        return False
+
+    def _apply_dev_cookie_override(self, transport) -> None:
+        """
+        If running in dev mode, force ``cookie_secure=False`` on the
+        transport's underlying policy so browsers accept cookies over
+        plain HTTP.
+        """
+        if not self._should_disable_secure_cookies():
+            return
+
+        policy = getattr(transport, "policy", None)
+        if policy is None:
+            return
+
+        if getattr(policy, "cookie_secure", False):
+            try:
+                object.__setattr__(policy, "cookie_secure", False)
+            except (AttributeError, TypeError, Exception):
+                pass  # frozen dataclass — can't patch
+            self.logger.info(
+                "Dev mode detected — set cookie_secure=False for session cookies "
+                "(browsers reject Secure cookies over plain HTTP)"
+            )
+
     def _create_session_engine(self, session_config: dict):
         """
         Create SessionEngine from configuration.
@@ -1114,6 +1171,8 @@ class AquiliaServer:
             else:
                 transport = transport_config
             
+            self._apply_dev_cookie_override(transport)
+
             self.logger.info(
                 f"SessionEngine initialized (Integration format): policy={policy.name}, "
                 f"store={type(store).__name__}, transport={type(transport).__name__}"
@@ -1162,6 +1221,9 @@ class AquiliaServer:
             
             # Resolve transport from TransportPolicy object on the policy
             transport = self._resolve_transport_from_policy(policy.transport)
+
+            # Dev mode: disable cookie_secure so sessions work on http://localhost
+            self._apply_dev_cookie_override(transport)
             
             engine = SessionEngine(policy=policy, store=store, transport=transport)
             
@@ -1220,6 +1282,9 @@ class AquiliaServer:
         
         # Resolve transport using the canonical resolver
         transport = self._resolve_transport_from_policy(policy.transport)
+
+        # Dev mode: disable cookie_secure so sessions work on http://localhost
+        self._apply_dev_cookie_override(transport)
         
         # Create engine
         engine = SessionEngine(

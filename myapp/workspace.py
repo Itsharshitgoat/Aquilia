@@ -18,7 +18,8 @@ Separation of concerns:
 - Environment variables = Override mechanism for secrets and env-specific values
 """
 
-from aquilia import Workspace, Module, Integration
+from aquilia import Workspace, Module, Integration, SessionPolicy
+from datetime import timedelta
 
 # Define workspace structure
 workspace = (
@@ -94,15 +95,15 @@ workspace = (
     ))
 
     # Sessions (uncomment to enable session management)
-    # .sessions(
-    #     policies=[
-    #         SessionPolicy(
-    #             name="default",
-    #             ttl=timedelta(days=7),
-    #             idle_timeout=timedelta(hours=1),
-    #         ),
-    #     ],
-    # )
+    .sessions(
+        policies=[
+            SessionPolicy(
+                name="default",
+                ttl=timedelta(days=7),
+                idle_timeout=timedelta(hours=1),
+            ),
+        ],
+    )
 
     # Security (uncomment to enable security middleware)
     # Fine-grained: use Integration.cors(), Integration.csp(),
@@ -123,11 +124,17 @@ workspace = (
 
     # Admin Dashboard (uncomment to enable admin at /admin/)
     # Requires: aq admin createsuperuser
-    # .integrate(Integration.admin(
-    #     url_prefix="/admin",
-    #     site_title="myapp Admin",
-    #     auto_discover=True,
-    # ))
+    .integrate(Integration.admin(
+        url_prefix="/admin",
+        site_title="myapp Admin",
+        auto_discover=True,
+    ))
+
+    .integrate(
+        Integration.database(
+            url = "sqlite:///db.sqlite3"
+        )
+    )
 )
 
 # Export for CLI/server

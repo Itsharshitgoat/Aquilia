@@ -146,6 +146,7 @@ from .sessions import (
     SessionPrincipal,
     MemoryStore as SessionMemoryStore,
     CookieTransport,
+    TransportPolicy,
     SessionFault,
     SessionExpiredFault,
 )
@@ -812,6 +813,7 @@ __all__ = [
     "SessionPrincipal",
     "SessionMemoryStore",
     "CookieTransport",
+    "TransportPolicy",
     
     # Session decorators (NEW - Unique syntax)
     "session",

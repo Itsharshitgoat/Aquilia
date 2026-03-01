@@ -1878,13 +1878,19 @@ def admin_check(ctx, fix: bool, as_json: bool):
                         "  Or add this to your workspace.py:",
                         "",
                         "    from datetime import timedelta",
-                        "    from aquilia.sessions import SessionPolicy",
+                        "    from aquilia.sessions import SessionPolicy, TransportPolicy",
                         "",
                         "    .sessions(",
                         "        policies=[",
                         '            SessionPolicy(name="default",',
                         "                ttl=timedelta(days=7),",
                         "                idle_timeout=timedelta(hours=1),",
+                        "                transport=TransportPolicy(",
+                        '                    cookie_name="aquilia_admin_session",',
+                        "                    cookie_secure=False,",
+                        "                    cookie_httponly=True,",
+                        '                    cookie_samesite="lax",',
+                        "                ),",
                         "            ),",
                         "        ],",
                         "    )",
@@ -2320,6 +2326,10 @@ def admin_setup(ctx, non_interactive: bool, database_url: Optional[str]):
         needed_imports.append("from datetime import timedelta")
     if "SessionPolicy" not in content:
         needed_imports.append("from aquilia.sessions import SessionPolicy")
+    if "TransportPolicy" not in content:
+        # Check if user already has 'from aquilia import ...' or 'from aquilia.sessions import ...'
+        # Use aquilia.sessions for the import to be safe
+        needed_imports.append("from aquilia.sessions import TransportPolicy")
 
     if needed_imports:
         # Insert after the last import line
@@ -2385,6 +2395,12 @@ def admin_setup(ctx, non_interactive: bool, database_url: Optional[str]):
                 name="default",
                 ttl=timedelta(days=7),
                 idle_timeout=timedelta(hours=1),
+                transport=TransportPolicy(
+                    cookie_name="aquilia_admin_session",
+                    cookie_secure=False,
+                    cookie_httponly=True,
+                    cookie_samesite="lax",
+                ),
             ),
         ],
     )""")
