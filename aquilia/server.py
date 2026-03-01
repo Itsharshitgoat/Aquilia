@@ -156,6 +156,7 @@ class AquiliaServer:
         self.controller_engine = ControllerEngine(
             self.controller_factory,
             fault_engine=self.fault_engine,
+            effect_registry=None,  # Wired at startup after effects init
         )
         self.controller_compiler = ControllerCompiler()
 
@@ -2214,6 +2215,11 @@ class AquiliaServer:
                 
                 await effect_registry.initialize_all()
                 self._effect_registry = effect_registry
+
+                # Wire effect registry into controller engine for FlowPipeline
+                if hasattr(self, 'controller_engine') and self.controller_engine:
+                    self.controller_engine.effect_registry = effect_registry
+
                 self.logger.info(f"Effect providers initialized ({len(effect_registry.providers)} registered)")
                 self.logger.debug(f"Effects initialized in {(_time.monotonic() - _t0) * 1000:.1f}ms")
             except Exception as e:

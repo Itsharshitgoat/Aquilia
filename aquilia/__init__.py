@@ -206,12 +206,20 @@ from .auth.integration.middleware import (
     create_auth_middleware_stack,
 )
 
-# Note: Flow guards removed - use controller-based auth with middleware
-# from .auth.integration.flow_guards import (
-#     require_auth,
-#     require_scopes,
-#     require_roles,
-# )
+# Flow guards — re-enabled with FlowPipeline integration
+from .auth.integration.flow_guards import (
+    FlowGuard,
+    RequireAuthGuard,
+    RequireScopesGuard,
+    RequireRolesGuard,
+    RequirePermissionGuard,
+    RequirePolicyGuard,
+    ControllerGuardAdapter,
+    require_auth,
+    require_scopes,
+    require_roles,
+    require_permission,
+)
 
 # ============================================================================
 # Cache System
@@ -326,7 +334,61 @@ from .debug import (
 # Effects & Patterns
 # ============================================================================
 
-from .effects import Effect, EffectProvider, EffectRegistry
+from .effects import (
+    Effect,
+    EffectKind,
+    EffectProvider,
+    EffectRegistry,
+    DBTx,
+    CacheEffect,
+    QueueEffect,
+    HTTPEffect,
+    StorageEffect,
+    DBTxProvider,
+    CacheProvider,
+    QueueProvider,
+    HTTPProvider,
+    StorageProvider,
+)
+
+# ============================================================================
+# Flow Pipeline System
+# ============================================================================
+
+from .flow import (
+    # Core types
+    FlowNode,
+    FlowNodeType,
+    FlowContext,
+    FlowPipeline,
+    FlowResult,
+    FlowStatus,
+    FlowError,
+    # Layer system (Effect-TS pattern)
+    Layer,
+    LayerComposition,
+    # Effect scope
+    EffectScope,
+    # Decorators
+    requires,
+    get_required_effects,
+    # Factory functions
+    pipeline,
+    guard,
+    transform,
+    handler,
+    hook,
+    from_pipeline_list,
+    # Priority constants
+    PRIORITY_CRITICAL,
+    PRIORITY_AUTH,
+    PRIORITY_VALIDATE,
+    PRIORITY_TRANSFORM,
+    PRIORITY_DEFAULT,
+    PRIORITY_ENRICH,
+    PRIORITY_LOG,
+    PRIORITY_CLEANUP,
+)
 
 # ============================================================================
 # Sockets (WebSockets)
@@ -720,6 +782,19 @@ __all__ = [
     "AquilAuthMiddleware",
     "create_auth_middleware_stack",
     
+    # Auth - Flow Guards
+    "FlowGuard",
+    "RequireAuthGuard",
+    "RequireScopesGuard",
+    "RequireRolesGuard",
+    "RequirePermissionGuard",
+    "RequirePolicyGuard",
+    "ControllerGuardAdapter",
+    "require_auth",
+    "require_scopes",
+    "require_roles",
+    "require_permission",
+    
     # Cache
     "CacheBackend",
     "CacheEntry",
@@ -795,8 +870,47 @@ __all__ = [
     
     # Effects
     "Effect",
+    "EffectKind",
     "EffectProvider",
     "EffectRegistry",
+    "DBTx",
+    "CacheEffect",
+    "QueueEffect",
+    "HTTPEffect",
+    "StorageEffect",
+    "DBTxProvider",
+    "CacheProvider",
+    "QueueProvider",
+    "HTTPProvider",
+    "StorageProvider",
+    
+    # Flow Pipeline System
+    "FlowNode",
+    "FlowNodeType",
+    "FlowContext",
+    "FlowPipeline",
+    "FlowResult",
+    "FlowStatus",
+    "FlowError",
+    "Layer",
+    "LayerComposition",
+    "EffectScope",
+    "requires",
+    "get_required_effects",
+    "pipeline",
+    "guard",
+    "transform",
+    "handler",
+    "hook",
+    "from_pipeline_list",
+    "PRIORITY_CRITICAL",
+    "PRIORITY_AUTH",
+    "PRIORITY_VALIDATE",
+    "PRIORITY_TRANSFORM",
+    "PRIORITY_DEFAULT",
+    "PRIORITY_ENRICH",
+    "PRIORITY_LOG",
+    "PRIORITY_CLEANUP",
     
     # Sockets (WebSockets)
     "SocketController",

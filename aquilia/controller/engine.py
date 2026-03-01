@@ -5,6 +5,8 @@ Integrates with:
 - DI system for controller instantiation
 - Auth system for identity binding
 - Session system for session state
+- Flow pipeline for guard/transform/hook execution
+- Effect system for automatic effect lifecycle
 - Middleware for pipeline execution
 - Faults for error handling
 """
@@ -46,10 +48,12 @@ class ControllerEngine:
         factory: ControllerFactory,
         enable_lifecycle: bool = True,
         fault_engine: Optional[Any] = None,
+        effect_registry: Optional[Any] = None,
     ):
         self.factory = factory
         self.enable_lifecycle = enable_lifecycle
         self.fault_engine = fault_engine
+        self.effect_registry = effect_registry
         self.logger = logging.getLogger("aquilia.controller.engine")
         self._lifecycle_initialized: set[type] = set()
     
@@ -106,23 +110,25 @@ class ControllerEngine:
             ctx=ctx,
         )
 
-        # Execute class-level pipeline
+        # Execute class-level pipeline via FlowPipeline
         if route.controller_metadata.pipeline:
-            for pipeline_node in route.controller_metadata.pipeline:
-                result = await self._execute_pipeline_node(
-                    pipeline_node, request, ctx, controller,
-                )
-                if isinstance(result, Response):
-                    return result
+            pipeline_result = await self._execute_flow_pipeline(
+                route.controller_metadata.pipeline,
+                request, ctx, controller,
+                pipeline_name=f"{controller_class.__name__}.class_pipeline",
+            )
+            if isinstance(pipeline_result, Response):
+                return pipeline_result
 
-        # Execute method-level pipeline
+        # Execute method-level pipeline via FlowPipeline
         if route_metadata.pipeline:
-            for pipeline_node in route_metadata.pipeline:
-                result = await self._execute_pipeline_node(
-                    pipeline_node, request, ctx, controller,
-                )
-                if isinstance(result, Response):
-                    return result
+            pipeline_result = await self._execute_flow_pipeline(
+                route_metadata.pipeline,
+                request, ctx, controller,
+                pipeline_name=f"{controller_class.__name__}.{route_metadata.handler_name}",
+            )
+            if isinstance(pipeline_result, Response):
+                return pipeline_result
 
         # Get handler method
         handler_method = getattr(controller, route_metadata.handler_name)
@@ -375,6 +381,84 @@ class ControllerEngine:
         elif isinstance(result, Response):
             return result
 
+        return None
+
+    async def _execute_flow_pipeline(
+        self,
+        pipeline_list: List[Any],
+        request: Request,
+        ctx: RequestCtx,
+        controller: Controller,
+        *,
+        pipeline_name: str = "controller_pipeline",
+    ) -> Optional[Response]:
+        """
+        Execute a pipeline list via the FlowPipeline engine.
+
+        Bridges controller pipeline syntax with the full Flow pipeline system.
+        Handles FlowNodes, FlowGuards, and legacy callables.
+        """
+        from ..flow import (
+            FlowPipeline,
+            FlowContext,
+            FlowNode,
+            FlowStatus,
+            from_pipeline_list,
+        )
+
+        # Convert pipeline list to FlowPipeline
+        flow_pipeline = from_pipeline_list(pipeline_list, name=pipeline_name)
+
+        if len(flow_pipeline) == 0:
+            return None
+
+        # Build FlowContext from RequestCtx
+        flow_ctx = FlowContext(
+            request=request,
+            container=ctx.container,
+            identity=ctx.identity,
+            session=ctx.session,
+            state=dict(ctx.state) if ctx.state else {},
+        )
+
+        # Inject controller into flow context state for pipeline nodes
+        flow_ctx.set("controller", controller)
+
+        # Execute via FlowPipeline
+        result = await flow_pipeline.execute(flow_ctx, self.effect_registry)
+
+        # Propagate state changes back to RequestCtx
+        if result.context:
+            for key, value in result.context.state.items():
+                if key != "controller":
+                    ctx.state[key] = value
+            # Propagate identity if changed by a guard
+            if result.context.identity is not None:
+                ctx.identity = result.context.identity
+
+            # Make acquired effects available in request state
+            if result.context.effects:
+                if isinstance(request.state, dict):
+                    request.state["effects"] = result.context.effects
+
+        # Handle result
+        if result.status == FlowStatus.GUARDED:
+            if result.value and isinstance(result.value, Response):
+                return result.value
+            if result.error:
+                # Guard raised an exception — re-raise for fault engine
+                raise result.error
+            return Response.json({"error": "Pipeline guard failed"}, status=403)
+
+        if result.status == FlowStatus.ERROR:
+            if result.error:
+                raise result.error
+            return Response.json({"error": "Pipeline error"}, status=500)
+
+        if result.status == FlowStatus.TIMEOUT:
+            return Response.json({"error": "Pipeline timeout"}, status=504)
+
+        # SUCCESS — continue to handler
         return None
     
     async def _bind_parameters(
