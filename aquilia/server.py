@@ -1641,15 +1641,26 @@ class AquiliaServer:
             ctrl = AdminController(site=site)
 
             # Define all admin routes: (method, path, handler_name, handler_func)
+            # Static routes MUST appear before dynamic /{model}/ routes so the
+            # router indexes them in _static_routes (O(1) lookup) and they are
+            # never shadowed by the <model:str> catch-all.
             admin_routes = [
-                ("GET",  f"{url_prefix}/",                  "dashboard",      ctrl.dashboard),
-                ("GET",  f"{url_prefix}/login",             "login_page",     ctrl.login_page),
-                ("POST", f"{url_prefix}/login",             "login_submit",   ctrl.login_submit),
-                ("GET",  f"{url_prefix}/logout",            "logout",         ctrl.logout),
-                ("GET",  f"{url_prefix}/audit/",            "audit_view",     ctrl.audit_view),
-                ("GET",  f"{url_prefix}/<model:str>/",      "list_view",      ctrl.list_view),
-                ("GET",  f"{url_prefix}/<model:str>/add",   "add_form",       ctrl.add_form),
-                ("POST", f"{url_prefix}/<model:str>/add",   "add_submit",     ctrl.add_submit),
+                ("GET",  f"{url_prefix}/",                  "dashboard",        ctrl.dashboard),
+                ("GET",  f"{url_prefix}/login",             "login_page",       ctrl.login_page),
+                ("POST", f"{url_prefix}/login",             "login_submit",     ctrl.login_submit),
+                ("GET",  f"{url_prefix}/logout",            "logout",           ctrl.logout),
+                ("GET",  f"{url_prefix}/orm/",              "orm_view",         ctrl.orm_view),
+                ("GET",  f"{url_prefix}/build/",            "build_view",       ctrl.build_view),
+                ("GET",  f"{url_prefix}/migrations/",       "migrations_view",  ctrl.migrations_view),
+                ("GET",  f"{url_prefix}/config/",           "config_view",      ctrl.config_view),
+                ("GET",  f"{url_prefix}/permissions/",      "permissions_view", ctrl.permissions_view),
+                ("POST", f"{url_prefix}/permissions/update", "permissions_update", ctrl.permissions_update),
+                ("GET",  f"{url_prefix}/audit/",            "audit_view",       ctrl.audit_view),
+                ("GET",  f"{url_prefix}/<model:str>/export", "export_view",     ctrl.export_view),
+                ("POST", f"{url_prefix}/<model:str>/action", "bulk_action",     ctrl.bulk_action),
+                ("GET",  f"{url_prefix}/<model:str>/",      "list_view",        ctrl.list_view),
+                ("GET",  f"{url_prefix}/<model:str>/add",   "add_form",         ctrl.add_form),
+                ("POST", f"{url_prefix}/<model:str>/add",   "add_submit",       ctrl.add_submit),
                 ("GET",  f"{url_prefix}/<model:str>/<pk:str>",        "edit_form",      ctrl.edit_form),
                 ("POST", f"{url_prefix}/<model:str>/<pk:str>",        "edit_submit",    ctrl.edit_submit),
                 ("POST", f"{url_prefix}/<model:str>/<pk:str>/delete", "delete_record",  ctrl.delete_record),

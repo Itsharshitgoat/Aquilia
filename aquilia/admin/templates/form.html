@@ -16,7 +16,13 @@
 
 <div class="glass-card card-padded" style="max-width:640px;">
     {% set action_url = (url_prefix|default('/admin') ~ '/' ~ model_name|lower ~ '/add') if is_create else (url_prefix|default('/admin') ~ '/' ~ model_name|lower ~ '/' ~ pk) %}
-    <form method="POST" action="{{ action_url }}">
+    <form method="POST" action="{{ action_url }}" id="adminForm" data-dirty="false">
+        {# ── Unsaved changes indicator ── #}
+        <div id="unsaved-bar" style="display:none;padding:10px 16px;margin:-20px -20px 20px;border-radius:var(--radius) var(--radius) 0 0;background:rgba(34,197,94,0.08);border-bottom:1px solid rgba(34,197,94,0.2);font-size:0.78rem;color:var(--accent);display:none;align-items:center;gap:8px;">
+            <i class="icon-alert-circle" style="font-size:14px;"></i>
+            <span>You have unsaved changes</span>
+            <span id="changed-count" style="margin-left:auto;background:var(--accent);color:#000;padding:1px 8px;border-radius:var(--radius-full);font-weight:600;font-size:0.7rem;"></span>
+        </div>
         {% for fld in fields %}
             {% set name = fld.name|default('') %}
             {% set label = fld.label|default(name) %}
@@ -75,12 +81,27 @@
         {% endfor %}
 
         <div style="display:flex;gap:10px;align-items:center;margin-top:28px;padding-top:20px;border-top:1px solid var(--border-subtle);">
-            <button type="submit" class="btn btn-primary">
+            <button type="submit" class="btn btn-primary" id="saveBtn">
                 <i class="icon-{{ 'plus' if is_create else 'save' }}" style="font-size:14px;"></i>
                 {{ 'Create' if is_create else 'Save Changes' }}
             </button>
+            {% if not is_create %}
+            <button type="button" class="btn btn-secondary" id="previewBtn" onclick="toggleChangePreview()" style="display:none;">
+                <i class="icon-eye" style="font-size:14px;"></i> Preview Changes
+            </button>
+            {% endif %}
             <a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/" class="btn btn-secondary">Cancel</a>
         </div>
+
+        {# ── Change diff preview ── #}
+        {% if not is_create %}
+        <div id="change-preview" style="display:none;margin-top:20px;padding:16px;background:rgba(0,0,0,0.4);border:1px solid var(--border-subtle);border-radius:var(--radius);">
+            <div style="font-size:0.78rem;font-weight:600;color:var(--text-muted);margin-bottom:12px;">
+                <i class="icon-git-commit" style="font-size:14px;vertical-align:-2px;margin-right:4px;"></i> Change Preview
+            </div>
+            <div id="diff-content" style="font-family:var(--font-mono);font-size:0.75rem;line-height:1.8;"></div>
+        </div>
+        {% endif %}
     </form>
 </div>
 
@@ -93,4 +114,100 @@
     </button>
 </form>
 {% endif %}
+
+{% block extra_js %}
+<script>
+(function() {
+    var form = document.getElementById('adminForm');
+    if (!form) return;
+    var initialValues = {};
+    var inputs = form.querySelectorAll('input, textarea, select');
+    inputs.forEach(function(el) {
+        if (!el.name || el.type === 'hidden') return;
+        if (el.type === 'checkbox') {
+            initialValues[el.name] = el.checked;
+        } else {
+            initialValues[el.name] = el.value;
+        }
+    });
+
+    function getChangedFields() {
+        var changes = [];
+        inputs.forEach(function(el) {
+            if (!el.name || el.type === 'hidden') return;
+            var oldVal = initialValues[el.name];
+            var newVal = el.type === 'checkbox' ? el.checked : el.value;
+            if (oldVal !== undefined && String(oldVal) !== String(newVal)) {
+                var label = el.closest('.form-group') ? (el.closest('.form-group').querySelector('.form-label') || {}).textContent || el.name : el.name;
+                changes.push({ name: el.name, label: label.trim(), oldVal: String(oldVal), newVal: String(newVal) });
+            }
+        });
+        return changes;
+    }
+
+    function updateDirtyState() {
+        var changes = getChangedFields();
+        var bar = document.getElementById('unsaved-bar');
+        var count = document.getElementById('changed-count');
+        var previewBtn = document.getElementById('previewBtn');
+        if (changes.length > 0) {
+            form.dataset.dirty = 'true';
+            if (bar) { bar.style.display = 'flex'; }
+            if (count) { count.textContent = changes.length + ' field' + (changes.length > 1 ? 's' : ''); }
+            if (previewBtn) { previewBtn.style.display = 'inline-flex'; }
+        } else {
+            form.dataset.dirty = 'false';
+            if (bar) { bar.style.display = 'none'; }
+            if (previewBtn) { previewBtn.style.display = 'none'; }
+            var preview = document.getElementById('change-preview');
+            if (preview) preview.style.display = 'none';
+        }
+    }
+
+    inputs.forEach(function(el) {
+        el.addEventListener('input', updateDirtyState);
+        el.addEventListener('change', updateDirtyState);
+    });
+
+    // Unsaved changes warning
+    window.addEventListener('beforeunload', function(e) {
+        if (form.dataset.dirty === 'true') {
+            e.preventDefault();
+            e.returnValue = '';
+        }
+    });
+    form.addEventListener('submit', function() { form.dataset.dirty = 'false'; });
+
+    // Change preview
+    window.toggleChangePreview = function() {
+        var preview = document.getElementById('change-preview');
+        var diff = document.getElementById('diff-content');
+        if (!preview || !diff) return;
+        if (preview.style.display !== 'none') { preview.style.display = 'none'; return; }
+        var changes = getChangedFields();
+        if (changes.length === 0) { preview.style.display = 'none'; return; }
+        var html = '';
+        changes.forEach(function(c) {
+            html += '<div style="margin-bottom:10px;padding:8px;background:rgba(0,0,0,0.3);border-radius:6px;">';
+            html += '<div style="color:var(--text-muted);font-size:0.72rem;margin-bottom:4px;font-weight:500;">' + c.label + '</div>';
+            html += '<div style="color:#ef4444;">- ' + (c.oldVal || '<em>empty</em>') + '</div>';
+            html += '<div style="color:#22c55e;">+ ' + (c.newVal || '<em>empty</em>') + '</div>';
+            html += '</div>';
+        });
+        diff.innerHTML = html;
+        preview.style.display = 'block';
+    };
+
+    // Ctrl+S / Cmd+S to save
+    document.addEventListener('keydown', function(e) {
+        if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+            e.preventDefault();
+            if (form.dataset.dirty === 'true') {
+                form.submit();
+            }
+        }
+    });
+})();
+</script>
+{% endblock %}
 {% endblock %}

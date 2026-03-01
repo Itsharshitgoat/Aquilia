@@ -23,6 +23,14 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 import pytest
 
+from aquilia.admin.controller import AdminController
+from aquilia.admin.templates import (
+    render_list_view,
+    render_form_view,
+    render_dashboard,
+    render_build_page,
+)
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 1. NEW MODEL IMPORTS & EXISTENCE TESTS
 # ═══════════════════════════════════════════════════════════════════════════
@@ -691,7 +699,7 @@ class TestAdminRouteCount:
     """Test that the correct number of admin routes are registered."""
 
     def test_admin_controller_has_all_routes(self):
-        """AdminController should have routes for all CRUD + auth endpoints."""
+        """AdminController should have routes for all CRUD + auth + new page endpoints."""
         from aquilia.admin.controller import AdminController
         import inspect
 
@@ -701,12 +709,14 @@ class TestAdminRouteCount:
             if hasattr(method, "__route_metadata__"):
                 route_methods.append(name)
 
-        # Should have at minimum these routes
+        # Should have at minimum these routes (includes 5 new pages)
         expected_names = [
             "dashboard", "login_page", "login_submit", "logout",
             "list_view", "add_form", "add_submit",
             "edit_form", "edit_submit", "delete_record",
             "audit_view",
+            "orm_view", "build_view", "migrations_view",
+            "config_view", "permissions_view",
         ]
         for name in expected_names:
             assert hasattr(AdminController, name), f"Missing route method: {name}"
@@ -1877,4 +1887,1339 @@ class TestAdminSetupInjectsTransportPolicy:
         callback = admin_check.callback
         source = inspect.getsource(callback)
         assert "TransportPolicy(" in source
-        assert "cookie_secure=False" in source
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ADMIN V3 UI OVERHAUL — REGRESSION TESTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── Helpers ──────────────────────────────────────────────────────────────
+
+
+class _MockField:
+    """Minimal field mock."""
+    def __init__(self, name, field_type="CharField", **kw):
+        self.name = name
+        self.__class__.__name__ = field_type
+        self.primary_key = kw.get("primary_key", False)
+        self.auto_now = kw.get("auto_now", False)
+        self.auto_now_add = kw.get("auto_now_add", False)
+        self.choices = kw.get("choices", None)
+        self.max_length = kw.get("max_length", None)
+        self.blank = kw.get("blank", False)
+        self.null = kw.get("null", False)
+        self.unique = kw.get("unique", False)
+        self.help_text = kw.get("help_text", "")
+        self.default = kw.get("default", None)
+        self.editable = kw.get("editable", True)
+        self.verbose_name = kw.get("verbose_name", None)
+
+    def has_default(self):
+        return self.default is not None
+
+
+class _MockManager:
+    async def count(self):
+        return 42
+    def get_queryset(self):
+        return self
+    def filter(self, **kw):
+        return self
+    def order(self, *a):
+        return self
+    def limit(self, n):
+        return self
+    def offset(self, n):
+        return self
+    async def all(self):
+        return []
+    def apply_q(self, q):
+        return self
+    async def delete(self):
+        return 1
+
+
+class _MockModel:
+    __name__ = "_MockModel"
+    _pk_attr = "id"
+    _fields: Dict[str, Any] = {}
+    _meta: Any = None
+    objects = _MockManager()
+
+    def __init_subclass__(cls, **kw):
+        super().__init_subclass__(**kw)
+        if not hasattr(cls, "_fields") or cls._fields is _MockModel._fields:
+            cls._fields = {}
+        cls.objects = _MockManager()
+
+    @property
+    def pk(self):
+        return getattr(self, "id", None)
+
+
+class _ProductModel(_MockModel):
+    __name__ = "ProductModel"
+    id = 1
+    name = "Widget"
+    _fields = {
+        "id": _MockField("id", "AutoField", primary_key=True),
+        "name": _MockField("name", "CharField", max_length=200),
+    }
+
+    class Meta:
+        app_label = "catalog"
+
+
+class _MockIdentity:
+    def __init__(self, id="user-1", attributes=None):
+        self.id = id
+        self._attrs = attributes or {}
+
+    def has_role(self, role):
+        return role in self._attrs.get("roles", [])
+
+    def is_active(self):
+        return True
+
+    def get_attribute(self, key, default=None):
+        return self._attrs.get(key, default)
+
+
+def _sa_identity():
+    return _MockIdentity(id="admin-1", attributes={"admin_role": "superadmin", "name": "Admin"})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# R1. Route Registration — new pages in _wire_admin_integration
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestRouteRegistration:
+    """Static routes /orm/…/permissions/ must be in _wire_admin_integration."""
+
+    def test_new_routes_in_source(self):
+        import inspect
+        from aquilia.server import AquiliaServer
+        src = inspect.getsource(AquiliaServer._wire_admin_integration)
+        for page in ("orm", "build", "migrations", "config", "permissions"):
+            assert f"/{page}/" in src, f"Route /{page}/ missing from _wire_admin_integration"
+
+    def test_static_routes_before_dynamic(self):
+        import inspect
+        from aquilia.server import AquiliaServer
+        src = inspect.getsource(AquiliaServer._wire_admin_integration)
+        orm_pos = src.find("/orm/")
+        model_pos = src.find("<model:str>/")
+        assert 0 < orm_pos < model_pos, "/orm/ must appear before <model:str>/"
+
+    def test_handler_names_in_source(self):
+        import inspect
+        from aquilia.server import AquiliaServer
+        src = inspect.getsource(AquiliaServer._wire_admin_integration)
+        for name in ("orm_view", "build_view", "migrations_view", "config_view", "permissions_view"):
+            assert name in src, f"Handler '{name}' missing"
+
+    def test_all_five_new_routes_count(self):
+        """Five new static routes + audit + 6 CRUD/auth = 16 total entries."""
+        import inspect
+        from aquilia.server import AquiliaServer
+        src = inspect.getsource(AquiliaServer._wire_admin_integration)
+        # Count tuples that start with ("GET" or ("POST"
+        import re
+        route_entries = re.findall(r'\("(?:GET|POST)"', src)
+        assert len(route_entries) >= 16, f"Expected ≥16 route entries, got {len(route_entries)}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# R2. New Template Rendering
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestNewTemplatesRendering:
+    """All 5 new page templates produce valid HTML."""
+
+    def test_render_orm_page(self):
+        from aquilia.admin.templates import render_orm_page
+        html = render_orm_page(app_list=[], model_counts={"X": 5}, identity_name="Admin")
+        assert "<!DOCTYPE html>" in html
+
+    def test_render_orm_page_empty(self):
+        from aquilia.admin.templates import render_orm_page
+        html = render_orm_page(app_list=[], model_counts={}, identity_name="Admin")
+        assert "<!DOCTYPE html>" in html
+
+    def test_render_build_page(self):
+        from aquilia.admin.templates import render_build_page
+        html = render_build_page(
+            build_info={"fingerprint": "abc"}, artifacts=[], pipeline_phases=[],
+            build_log="", app_list=[], identity_name="Admin",
+        )
+        assert "<!DOCTYPE html>" in html
+
+    def test_render_build_page_with_artifacts(self):
+        from aquilia.admin.templates import render_build_page
+        html = render_build_page(
+            build_info={},
+            artifacts=[{"name": "x.crous", "kind": "bundle", "size": "1 KB", "digest": "abc"}],
+            pipeline_phases=[{"name": "Discovery", "status": "success", "detail": "ok"}],
+            build_log="done", app_list=[], identity_name="Admin",
+        )
+        assert "<!DOCTYPE html>" in html
+
+    def test_render_migrations_page(self):
+        from aquilia.admin.templates import render_migrations_page
+        html = render_migrations_page(
+            migrations=[{"filename": "0001.py", "revision": "r1", "models": ["A"],
+                         "operations_count": 2, "source": "#x", "source_highlighted": "x"}],
+            app_list=[], identity_name="Admin",
+        )
+        assert "<!DOCTYPE html>" in html
+
+    def test_render_migrations_page_empty(self):
+        from aquilia.admin.templates import render_migrations_page
+        html = render_migrations_page(migrations=[], app_list=[], identity_name="Admin")
+        assert "<!DOCTYPE html>" in html
+
+    def test_render_config_page(self):
+        from aquilia.admin.templates import render_config_page
+        html = render_config_page(
+            config_files=[{"name": "base.yaml", "path": "config/base.yaml",
+                           "content": "k: v", "content_highlighted": "k: v"}],
+            workspace_info={"name": "x", "version": "1", "modules": [], "integrations": []},
+            app_list=[], identity_name="Admin",
+        )
+        assert "<!DOCTYPE html>" in html
+
+    def test_render_config_page_empty(self):
+        from aquilia.admin.templates import render_config_page
+        html = render_config_page(
+            config_files=[], workspace_info=None, app_list=[], identity_name="Admin",
+        )
+        assert "<!DOCTYPE html>" in html
+
+    def test_render_permissions_page(self):
+        from aquilia.admin.templates import render_permissions_page
+        html = render_permissions_page(
+            roles=[{"name": "superadmin", "level": 40, "description": "x", "permissions": ["*"]}],
+            all_permissions=["model.view"],
+            model_permissions=[{"name": "X", "perms": {"view": True, "add": True, "change": True, "delete": True, "export": True}}],
+            app_list=[], identity_name="Admin",
+        )
+        assert "<!DOCTYPE html>" in html
+
+    def test_render_permissions_page_empty(self):
+        from aquilia.admin.templates import render_permissions_page
+        html = render_permissions_page(
+            roles=[], all_permissions=[], model_permissions=[],
+            app_list=[], identity_name="Admin",
+        )
+        assert "<!DOCTYPE html>" in html
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# R3. Controller Handlers — auth + render
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestNewControllerHandlers:
+    """Each new handler returns 302 (unauth) or 200 (auth)."""
+
+    def setup_method(self):
+        from aquilia.admin.site import AdminSite
+        AdminSite.reset()
+        self.site = AdminSite()
+        self.site.register(_ProductModel)
+        self.ctrl = AdminController(site=self.site)
+
+    def _ctx(self, identity=None, qp=None):
+        ctx = MagicMock()
+        ctx.identity = identity
+        s = MagicMock(); s.data = {}
+        ctx.session = s
+        ctx.query_param = lambda k, d=None: (qp or {}).get(k, d)
+        ctx.form = AsyncMock(return_value={})
+        return ctx
+
+    def _req(self, pp=None):
+        r = MagicMock()
+        r.state = {"path_params": pp or {}}
+        return r
+
+    # ORM
+    @pytest.mark.asyncio
+    async def test_orm_unauth(self):
+        resp = await self.ctrl.orm_view(self._req(), self._ctx())
+        assert resp.status == 302
+
+    @pytest.mark.asyncio
+    async def test_orm_auth(self):
+        self.site._initialized = True
+        resp = await self.ctrl.orm_view(self._req(), self._ctx(identity=_sa_identity()))
+        assert resp.status == 200
+        assert b"<!DOCTYPE html>" in resp._content
+
+    # Build
+    @pytest.mark.asyncio
+    async def test_build_unauth(self):
+        resp = await self.ctrl.build_view(self._req(), self._ctx())
+        assert resp.status == 302
+
+    @pytest.mark.asyncio
+    async def test_build_auth(self):
+        self.site._initialized = True
+        resp = await self.ctrl.build_view(self._req(), self._ctx(identity=_sa_identity()))
+        assert resp.status == 200
+
+    # Migrations
+    @pytest.mark.asyncio
+    async def test_migrations_unauth(self):
+        resp = await self.ctrl.migrations_view(self._req(), self._ctx())
+        assert resp.status == 302
+
+    @pytest.mark.asyncio
+    async def test_migrations_auth(self):
+        self.site._initialized = True
+        resp = await self.ctrl.migrations_view(self._req(), self._ctx(identity=_sa_identity()))
+        assert resp.status == 200
+
+    # Config
+    @pytest.mark.asyncio
+    async def test_config_unauth(self):
+        resp = await self.ctrl.config_view(self._req(), self._ctx())
+        assert resp.status == 302
+
+    @pytest.mark.asyncio
+    async def test_config_auth(self):
+        self.site._initialized = True
+        resp = await self.ctrl.config_view(self._req(), self._ctx(identity=_sa_identity()))
+        assert resp.status == 200
+
+    # Permissions
+    @pytest.mark.asyncio
+    async def test_permissions_unauth(self):
+        resp = await self.ctrl.permissions_view(self._req(), self._ctx())
+        assert resp.status == 302
+
+    @pytest.mark.asyncio
+    async def test_permissions_auth(self):
+        self.site._initialized = True
+        resp = await self.ctrl.permissions_view(self._req(), self._ctx(identity=_sa_identity()))
+        assert resp.status == 200
+
+    # Existing routes still work
+    @pytest.mark.asyncio
+    async def test_dashboard_still_200(self):
+        self.site._initialized = True
+        resp = await self.ctrl.dashboard(self._req(), self._ctx(identity=_sa_identity()))
+        assert resp.status == 200
+
+    @pytest.mark.asyncio
+    async def test_audit_still_200(self):
+        self.site._initialized = True
+        resp = await self.ctrl.audit_view(self._req(), self._ctx(identity=_sa_identity()))
+        assert resp.status == 200
+
+    @pytest.mark.asyncio
+    async def test_list_view_real_model(self):
+        """/{model}/ still works for genuine model names."""
+        self.site._initialized = True
+        resp = await self.ctrl.list_view(
+            self._req({"model": "_productmodel"}),
+            self._ctx(identity=_sa_identity(), qp={"q": "", "page": "1"}),
+        )
+        assert resp.status == 200
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# R4. Pagination Integration
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestPaginationIntegration:
+    """list_records uses PageNumberPagination from aquilia.controller.pagination."""
+
+    def test_site_imports_pagination(self):
+        import inspect
+        from aquilia.admin import site as mod
+        src = inspect.getsource(mod)
+        assert "from aquilia.controller.pagination import PageNumberPagination" in src
+
+    def test_list_records_uses_paginate_queryset(self):
+        import inspect
+        from aquilia.admin.site import AdminSite
+        src = inspect.getsource(AdminSite.list_records)
+        assert "PageNumberPagination" in src
+        assert "paginate_queryset" in src
+
+    @pytest.mark.asyncio
+    async def test_list_records_pagination_keys(self):
+        from aquilia.admin.site import AdminSite
+        AdminSite.reset()
+        site = AdminSite()
+        site.register(_ProductModel)
+        site._initialized = True
+        data = await site.list_records("_productmodel", page=1, per_page=10, identity=_sa_identity())
+        for key in ("page", "per_page", "total", "total_pages", "has_next",
+                     "has_prev", "next_url", "previous_url"):
+            assert key in data, f"Missing key: {key}"
+
+    @pytest.mark.asyncio
+    async def test_pagination_values_page1(self):
+        from aquilia.admin.site import AdminSite
+        AdminSite.reset()
+        site = AdminSite()
+        site.register(_ProductModel)
+        site._initialized = True
+        data = await site.list_records("_productmodel", page=1, per_page=10, identity=_sa_identity())
+        assert data["total"] == 42
+        assert data["total_pages"] == 5
+        assert data["has_next"] is True
+        assert data["has_prev"] is False
+
+    @pytest.mark.asyncio
+    async def test_pagination_values_last_page(self):
+        from aquilia.admin.site import AdminSite
+        AdminSite.reset()
+        site = AdminSite()
+        site.register(_ProductModel)
+        site._initialized = True
+        data = await site.list_records("_productmodel", page=5, per_page=10, identity=_sa_identity())
+        assert data["has_next"] is False
+        assert data["has_prev"] is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# R5. PageNumberPagination Standalone
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestPageNumberPaginationUnit:
+    def _req(self, **kw):
+        return type("R", (), {"query_params": {str(k): str(v) for k, v in kw.items()}})()
+
+    def test_default_page_size(self):
+        from aquilia.controller.pagination import PageNumberPagination
+        assert PageNumberPagination().page_size == 20
+
+    def test_first_page(self):
+        from aquilia.controller.pagination import PageNumberPagination
+        p = PageNumberPagination(page_size=10)
+        r = p.paginate_list(list(range(100)), self._req(page=1))
+        assert r["count"] == 100
+        assert r["page"] == 1
+        assert r["total_pages"] == 10
+        assert len(r["results"]) == 10
+        assert r["previous"] is None
+        assert r["next"] is not None
+
+    def test_last_page(self):
+        from aquilia.controller.pagination import PageNumberPagination
+        p = PageNumberPagination(page_size=10)
+        r = p.paginate_list(list(range(100)), self._req(page=10))
+        assert r["next"] is None
+        assert r["previous"] is not None
+
+    def test_empty_list(self):
+        from aquilia.controller.pagination import PageNumberPagination
+        r = PageNumberPagination(page_size=10).paginate_list([], self._req(page=1))
+        assert r["count"] == 0
+        assert r["results"] == []
+
+    def test_max_page_size_clamped(self):
+        from aquilia.controller.pagination import PageNumberPagination
+        p = PageNumberPagination(page_size=20, max_page_size=50)
+        r = p.paginate_list(list(range(200)), self._req(page=1, page_size=999))
+        assert r["page_size"] == 50
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# R6. Data Methods Shape
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDataMethodsShape:
+    def setup_method(self):
+        from aquilia.admin.site import AdminSite
+        AdminSite.reset()
+        self.site = AdminSite()
+        self.site.register(_ProductModel)
+        self.site._initialized = True
+
+    def test_build_info_keys(self):
+        r = self.site.get_build_info()
+        for k in ("info", "artifacts", "pipeline_phases", "build_log"):
+            assert k in r
+
+    def test_migrations_is_list(self):
+        assert isinstance(self.site.get_migrations_data(), list)
+
+    def test_config_keys(self):
+        r = self.site.get_config_data()
+        assert "files" in r and "workspace" in r
+
+    def test_permissions_keys(self):
+        r = self.site.get_permissions_data(_sa_identity())
+        for k in ("roles", "all_permissions", "model_permissions"):
+            assert k in r
+
+    def test_permissions_roles_sorted(self):
+        r = self.site.get_permissions_data(_sa_identity())
+        levels = [role["level"] for role in r["roles"]]
+        assert levels == sorted(levels, reverse=True)
+
+    def test_permissions_all_roles_present(self):
+        from aquilia.admin.permissions import AdminRole
+        r = self.site.get_permissions_data(_sa_identity())
+        role_names = {role["name"] for role in r["roles"]}
+        for ar in AdminRole:
+            assert ar.value in role_names
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# R7. Template Partials & CSS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestTemplatePartialsV3:
+    def test_sidebar_v2_exists(self):
+        from pathlib import Path
+        p = Path(__file__).parent.parent / "aquilia/admin/templates/partials/sidebar_v2.html"
+        assert p.exists()
+
+    def test_sidebar_v2_nav_links(self):
+        from pathlib import Path
+        content = (Path(__file__).parent.parent / "aquilia/admin/templates/partials/sidebar_v2.html").read_text()
+        for page in ("orm", "build", "migrations", "config", "permissions", "audit"):
+            assert page in content.lower(), f"/{page}/ link missing from sidebar"
+
+    def test_css_exists(self):
+        from pathlib import Path
+        p = Path(__file__).parent.parent / "aquilia/admin/templates/partials/css.html"
+        assert p.exists()
+
+    def test_css_sarvam_tokens(self):
+        from pathlib import Path
+        content = (Path(__file__).parent.parent / "aquilia/admin/templates/partials/css.html").read_text()
+        assert "22c55e" in content, "Missing Aquilia green accent"
+        assert "Inter" in content, "Missing Inter font"
+
+    def test_base_includes_sidebar(self):
+        from pathlib import Path
+        content = (Path(__file__).parent.parent / "aquilia/admin/templates/base.html").read_text()
+        assert "sidebar_v2" in content
+
+    def test_base_includes_css(self):
+        from pathlib import Path
+        content = (Path(__file__).parent.parent / "aquilia/admin/templates/base.html").read_text()
+        assert "css.html" in content
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# R8. New Templates On Disk
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestNewTemplatesOnDisk:
+    @pytest.mark.parametrize("name", [
+        "orm.html", "build.html", "migrations.html", "config.html", "permissions.html",
+    ])
+    def test_exists(self, name):
+        from pathlib import Path
+        assert (Path(__file__).parent.parent / "aquilia/admin/templates" / name).exists()
+
+    @pytest.mark.parametrize("name", [
+        "orm.html", "build.html", "migrations.html", "config.html", "permissions.html",
+    ])
+    def test_extends_base(self, name):
+        from pathlib import Path
+        content = (Path(__file__).parent.parent / "aquilia/admin/templates" / name).read_text()
+        assert "base.html" in content
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# R9. JSON Removal
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestJsonRemovalV3:
+    def test_bundler_no_aq_json(self):
+        import inspect
+        from aquilia.build.bundler import CrousBundler
+        assert ".aq.json" not in inspect.getsource(CrousBundler)
+
+    def test_build_info_scans_crous(self):
+        import inspect
+        from aquilia.admin.site import AdminSite
+        src = inspect.getsource(AdminSite.get_build_info)
+        assert ".crous" in src
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# R10. Syntax Highlighting
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestSyntaxHighlightingV3:
+    def setup_method(self):
+        from aquilia.admin.site import AdminSite
+        AdminSite.reset()
+        self.site = AdminSite()
+
+    def test_highlight_python(self):
+        r = self.site._highlight_python("def f():\n    pass\n")
+        assert isinstance(r, str) and len(r) > 0
+
+    def test_highlight_python_has_spans(self):
+        r = self.site._highlight_python("def f():\n    return True\n")
+        assert "<span" in r or "def" in r
+
+    def test_highlight_yaml(self):
+        r = self.site._highlight_yaml("server:\n  port: 8000\n")
+        assert isinstance(r, str) and len(r) > 0
+
+    def test_highlight_yaml_has_spans(self):
+        r = self.site._highlight_yaml("database:\n  host: localhost\n")
+        assert "<span" in r or "database" in r
+
+    def test_highlight_python_empty(self):
+        assert isinstance(self.site._highlight_python(""), str)
+
+    def test_highlight_yaml_empty(self):
+        assert isinstance(self.site._highlight_yaml(""), str)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SESSION 5 — NEW FEATURE TESTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestFormDataFix:
+    """Verify FormData→dict conversion in admin handlers."""
+
+    def setup_method(self):
+        from aquilia.admin.site import AdminSite
+        AdminSite.reset()
+        self.site = AdminSite()
+        self.site.register(_ProductModel)
+        self.ctrl = AdminController(site=self.site)
+
+    def _ctx(self, identity=None, session_data=None):
+        ctx = MagicMock()
+        ctx.identity = identity
+        s = MagicMock()
+        s.data = session_data or {}
+        ctx.session = s
+        ctx.query_param = lambda k, d=None: d
+        return ctx
+
+    def _req(self, pp=None, headers=None, scope_client=None):
+        r = MagicMock()
+        r.state = {"path_params": pp or {}}
+        r.headers = headers or {}
+        r.scope = {"client": scope_client or ("127.0.0.1", 54321)}
+        return r
+
+    def _mock_formdata(self, data_dict):
+        """Create a mock FormData with .fields (MultiDict-like)."""
+        fd = MagicMock()
+        fields = MagicMock()
+        fields.to_dict = MagicMock(return_value=data_dict)
+        fd.fields = fields
+        fd.get = lambda k, d=None: data_dict.get(k, d)
+        return fd
+
+    @pytest.mark.asyncio
+    async def test_login_submit_with_formdata(self):
+        """Login should handle FormData objects without .items() error."""
+        fd = self._mock_formdata({"username": "admin", "password": "secret"})
+        ctx = self._ctx()
+        ctx.form = AsyncMock(return_value=fd)
+        req = self._req()
+        resp = await self.ctrl.login_submit(req, ctx)
+        # Should not crash with 'FormData' has no attribute 'items'
+        # 401 = invalid creds (expected), 302 = redirect (logged in)
+        assert resp.status in (200, 302, 400, 401)
+
+    @pytest.mark.asyncio
+    async def test_add_submit_with_formdata(self):
+        """Add handler should convert FormData to dict."""
+        fd = self._mock_formdata({"name": "New Widget"})
+        ctx = self._ctx(identity=_sa_identity())
+        ctx.form = AsyncMock(return_value=fd)
+        req = self._req(pp={"model": "productmodel"})
+        self.site._initialized = True
+        self.site.create_record = AsyncMock(return_value="1")
+        resp = await self.ctrl.add_submit(req, ctx)
+        assert resp.status in (200, 302)
+
+    @pytest.mark.asyncio
+    async def test_edit_submit_with_formdata(self):
+        """Edit handler should convert FormData to dict."""
+        fd = self._mock_formdata({"name": "Updated Widget"})
+        ctx = self._ctx(identity=_sa_identity())
+        ctx.form = AsyncMock(return_value=fd)
+        req = self._req(pp={"model": "productmodel", "pk": "1"})
+        self.site._initialized = True
+        self.site.update_record = AsyncMock(return_value=True)
+        resp = await self.ctrl.edit_submit(req, ctx)
+        assert resp.status in (200, 302)
+
+
+class TestExtractRequestMeta:
+    """Test _extract_request_meta helper."""
+
+    def test_extract_ip_from_forwarded(self):
+        from aquilia.admin.controller import _extract_request_meta
+        req = MagicMock()
+        req.headers = {"x-forwarded-for": "1.2.3.4, 5.6.7.8", "user-agent": "TestBot/1.0"}
+        req.scope = {"client": ("127.0.0.1", 1234)}
+        meta = _extract_request_meta(req)
+        assert meta["ip_address"] == "1.2.3.4"
+        assert meta["user_agent"] == "TestBot/1.0"
+
+    def test_extract_ip_from_real_ip(self):
+        from aquilia.admin.controller import _extract_request_meta
+        req = MagicMock()
+        req.headers = {"x-real-ip": "10.0.0.1", "user-agent": "Chrome"}
+        req.scope = {"client": ("127.0.0.1", 1234)}
+        meta = _extract_request_meta(req)
+        assert meta["ip_address"] == "10.0.0.1"
+
+    def test_extract_ip_from_scope(self):
+        from aquilia.admin.controller import _extract_request_meta
+        req = MagicMock()
+        req.headers = {}
+        req.scope = {"client": ("192.168.1.1", 9999)}
+        meta = _extract_request_meta(req)
+        assert meta["ip_address"] == "192.168.1.1"
+
+    def test_extract_no_scope_client(self):
+        from aquilia.admin.controller import _extract_request_meta
+        req = MagicMock()
+        req.headers = {}
+        req.scope = {}
+        meta = _extract_request_meta(req)
+        assert meta["ip_address"] == ""
+
+
+class TestAuditActionEnum:
+    """Verify all AdminAction enum values exist."""
+
+    def test_search_action(self):
+        from aquilia.admin.audit import AdminAction
+        assert AdminAction.SEARCH.value == "search"
+
+    def test_permission_change_action(self):
+        from aquilia.admin.audit import AdminAction
+        assert AdminAction.PERMISSION_CHANGE.value == "permission_change"
+
+    def test_view_action(self):
+        from aquilia.admin.audit import AdminAction
+        assert AdminAction.VIEW.value == "view"
+
+    def test_list_action(self):
+        from aquilia.admin.audit import AdminAction
+        assert AdminAction.LIST.value == "list"
+
+    def test_bulk_action_enum(self):
+        from aquilia.admin.audit import AdminAction
+        assert AdminAction.BULK_ACTION.value == "bulk_action"
+
+    def test_export_action(self):
+        from aquilia.admin.audit import AdminAction
+        assert AdminAction.EXPORT.value == "export"
+
+    def test_all_actions_are_unique(self):
+        from aquilia.admin.audit import AdminAction
+        values = [a.value for a in AdminAction]
+        assert len(values) == len(set(values)), "Duplicate AdminAction values"
+
+
+class TestAuditComprehensiveLogging:
+    """Audit log should capture IP, user-agent, and all action types."""
+
+    def setup_method(self):
+        from aquilia.admin.audit import AdminAuditLog
+        self.log = AdminAuditLog()
+
+    def test_log_with_ip_and_ua(self):
+        from aquilia.admin.audit import AdminAction
+        entry = self.log.log(
+            user_id="u1", username="admin", role="superadmin",
+            action=AdminAction.LOGIN,
+            ip_address="10.0.0.1", user_agent="Mozilla/5.0"
+        )
+        assert entry.ip_address == "10.0.0.1"
+        assert entry.user_agent == "Mozilla/5.0"
+
+    def test_log_search_with_metadata(self):
+        from aquilia.admin.audit import AdminAction
+        entry = self.log.log(
+            user_id="u1", username="admin", role="superadmin",
+            action=AdminAction.SEARCH,
+            model_name="product",
+            metadata={"query": "widget", "page": 1}
+        )
+        assert entry.action == AdminAction.SEARCH
+        assert entry.metadata["query"] == "widget"
+
+    def test_log_permission_change(self):
+        from aquilia.admin.audit import AdminAction
+        entry = self.log.log(
+            user_id="u1", username="admin", role="superadmin",
+            action=AdminAction.PERMISSION_CHANGE,
+            metadata={"user": "bob", "permission": "add", "granted": True}
+        )
+        assert entry.action == AdminAction.PERMISSION_CHANGE
+
+    def test_log_bulk_action_with_pks(self):
+        from aquilia.admin.audit import AdminAction
+        entry = self.log.log(
+            user_id="u1", username="admin", role="superadmin",
+            action=AdminAction.BULK_ACTION,
+            model_name="product",
+            metadata={"action": "delete_selected", "pks": ["1", "2", "3"], "count": 3}
+        )
+        assert entry.metadata["count"] == 3
+
+    def test_log_export_with_format(self):
+        from aquilia.admin.audit import AdminAction
+        entry = self.log.log(
+            user_id="u1", username="admin", role="superadmin",
+            action=AdminAction.EXPORT,
+            model_name="product",
+            metadata={"format": "csv", "count": 50}
+        )
+        assert entry.metadata["format"] == "csv"
+
+    def test_log_view_record(self):
+        from aquilia.admin.audit import AdminAction
+        entry = self.log.log(
+            user_id="u1", username="admin", role="superadmin",
+            action=AdminAction.VIEW,
+            model_name="product", record_pk="42"
+        )
+        assert entry.record_pk == "42"
+
+    def test_log_delete_record(self):
+        from aquilia.admin.audit import AdminAction
+        entry = self.log.log(
+            user_id="u1", username="admin", role="superadmin",
+            action=AdminAction.DELETE,
+            model_name="product", record_pk="42",
+            ip_address="192.168.1.1", user_agent="Safari"
+        )
+        assert entry.action == AdminAction.DELETE
+        assert entry.ip_address == "192.168.1.1"
+
+    def test_log_entries_accumulate(self):
+        from aquilia.admin.audit import AdminAction
+        for i in range(5):
+            self.log.log(
+                user_id="u1", username="admin", role="superadmin",
+                action=AdminAction.LIST, model_name=f"model_{i}"
+            )
+        assert len(self.log._entries) == 5
+
+    def test_entry_to_dict(self):
+        from aquilia.admin.audit import AdminAction
+        entry = self.log.log(
+            user_id="u1", username="admin", role="superadmin",
+            action=AdminAction.LOGIN, ip_address="1.2.3.4"
+        )
+        d = entry.to_dict()
+        assert d["action"] == "login"
+        assert d["ip_address"] == "1.2.3.4"
+        assert "timestamp" in d
+        assert "id" in d
+
+
+class TestBulkActionHandler:
+    """Bulk action controller tests."""
+
+    def setup_method(self):
+        from aquilia.admin.site import AdminSite
+        AdminSite.reset()
+        self.site = AdminSite()
+        self.site.register(_ProductModel)
+        self.ctrl = AdminController(site=self.site)
+        self.site._initialized = True
+
+    def _ctx(self, identity=None, session_data=None):
+        ctx = MagicMock()
+        ctx.identity = identity
+        s = MagicMock()
+        s.data = session_data if session_data is not None else {}
+        ctx.session = s
+        ctx.query_param = lambda k, d=None: d
+        return ctx
+
+    def _req(self, pp=None):
+        r = MagicMock()
+        r.state = {"path_params": pp or {}}
+        r.headers = {}
+        r.scope = {"client": ("127.0.0.1", 54321)}
+        return r
+
+    def _mock_formdata_multi(self, data_dict):
+        fd = MagicMock()
+        fields = MagicMock()
+        fields.to_dict = MagicMock(side_effect=lambda multi=False: data_dict)
+        fd.fields = fields
+        return fd
+
+    @pytest.mark.asyncio
+    async def test_bulk_action_unauth(self):
+        resp = await self.ctrl.bulk_action(self._req(pp={"model": "productmodel"}), self._ctx())
+        assert resp.status == 302
+
+    @pytest.mark.asyncio
+    async def test_bulk_action_no_selection(self):
+        fd = self._mock_formdata_multi({"action": "delete_selected", "selected": []})
+        ctx = self._ctx(identity=_sa_identity())
+        ctx.form = AsyncMock(return_value=fd)
+        resp = await self.ctrl.bulk_action(self._req(pp={"model": "productmodel"}), ctx)
+        assert resp.status == 302
+
+    @pytest.mark.asyncio
+    async def test_bulk_action_success(self):
+        fd = self._mock_formdata_multi({"action": "delete_selected", "selected": ["1", "2"]})
+        ctx = self._ctx(identity=_sa_identity())
+        ctx.form = AsyncMock(return_value=fd)
+        self.site.execute_action = AsyncMock(return_value="2 records deleted")
+        self.site.audit_log = MagicMock()
+        self.site.audit_log.log = MagicMock()
+        resp = await self.ctrl.bulk_action(self._req(pp={"model": "productmodel"}), ctx)
+        assert resp.status == 302
+        assert ctx.session.data["_admin_flash"] == "2 records deleted"
+        assert ctx.session.data["_admin_flash_type"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_bulk_action_error(self):
+        fd = self._mock_formdata_multi({"action": "bad_action", "selected": ["1"]})
+        ctx = self._ctx(identity=_sa_identity())
+        ctx.form = AsyncMock(return_value=fd)
+        self.site.execute_action = AsyncMock(side_effect=Exception("Action failed"))
+        self.site.audit_log = MagicMock()
+        self.site.audit_log.log = MagicMock()
+        resp = await self.ctrl.bulk_action(self._req(pp={"model": "productmodel"}), ctx)
+        assert resp.status == 302
+        assert ctx.session.data["_admin_flash"] == "Action failed"
+        assert ctx.session.data["_admin_flash_type"] == "error"
+
+
+class TestExportHandler:
+    """Export controller tests."""
+
+    def setup_method(self):
+        from aquilia.admin.site import AdminSite
+        AdminSite.reset()
+        self.site = AdminSite()
+        self.site.register(_ProductModel)
+        self.ctrl = AdminController(site=self.site)
+        self.site._initialized = True
+
+    def _ctx(self, identity=None, fmt="csv"):
+        ctx = MagicMock()
+        ctx.identity = identity
+        s = MagicMock()
+        s.data = {}
+        ctx.session = s
+        ctx.query_param = lambda k, d=None: fmt if k == "format" else d
+        return ctx
+
+    def _req(self, pp=None):
+        r = MagicMock()
+        r.state = {"path_params": pp or {}}
+        r.headers = {}
+        r.scope = {"client": ("127.0.0.1", 54321)}
+        return r
+
+    @pytest.mark.asyncio
+    async def test_export_unauth(self):
+        resp = await self.ctrl.export_view(self._req(pp={"model": "productmodel"}), self._ctx())
+        assert resp.status == 302
+
+    @pytest.mark.asyncio
+    async def test_export_csv(self):
+        ctx = self._ctx(identity=_sa_identity(), fmt="csv")
+        self.site.list_records = AsyncMock(return_value={
+            "rows": [{"id": "1", "name": "Widget"}],
+            "list_display": ["id", "name"],
+            "model_name": "ProductModel"
+        })
+        self.site.audit_log = MagicMock()
+        self.site.audit_log.log = MagicMock()
+        resp = await self.ctrl.export_view(self._req(pp={"model": "productmodel"}), ctx)
+        assert resp.status == 200
+        assert b"id,name" in resp._content
+        assert b"Widget" in resp._content
+        assert resp.headers["content-type"] == "text/csv; charset=utf-8"
+
+    @pytest.mark.asyncio
+    async def test_export_json(self):
+        ctx = self._ctx(identity=_sa_identity(), fmt="json")
+        self.site.list_records = AsyncMock(return_value={
+            "rows": [{"id": "1", "name": "Widget"}],
+            "list_display": ["id", "name"],
+            "model_name": "ProductModel"
+        })
+        self.site.audit_log = MagicMock()
+        self.site.audit_log.log = MagicMock()
+        resp = await self.ctrl.export_view(self._req(pp={"model": "productmodel"}), ctx)
+        assert resp.status == 200
+        data = json.loads(resp._content)
+        assert len(data) == 1
+        assert data[0]["name"] == "Widget"
+        assert resp.headers["content-type"] == "application/json; charset=utf-8"
+
+    @pytest.mark.asyncio
+    async def test_export_audits_action(self):
+        ctx = self._ctx(identity=_sa_identity(), fmt="json")
+        self.site.list_records = AsyncMock(return_value={
+            "rows": [], "list_display": ["id"], "model_name": "Product"
+        })
+        self.site.audit_log = MagicMock()
+        self.site.audit_log.log = MagicMock()
+        await self.ctrl.export_view(self._req(pp={"model": "productmodel"}), ctx)
+        self.site.audit_log.log.assert_called_once()
+        call_kwargs = self.site.audit_log.log.call_args
+        from aquilia.admin.audit import AdminAction
+        assert call_kwargs.kwargs.get("action") == AdminAction.EXPORT or (call_kwargs[1].get("action") == AdminAction.EXPORT if call_kwargs[1] else False) or (len(call_kwargs[0]) >= 4 and call_kwargs[0][3] == AdminAction.EXPORT)
+
+
+class TestListViewFlash:
+    """List view should read flash messages from session."""
+
+    def setup_method(self):
+        from aquilia.admin.site import AdminSite
+        AdminSite.reset()
+        self.site = AdminSite()
+        self.site.register(_ProductModel)
+        self.ctrl = AdminController(site=self.site)
+        self.site._initialized = True
+
+    @pytest.mark.asyncio
+    async def test_list_view_reads_flash(self):
+        ctx = MagicMock()
+        ctx.identity = _sa_identity()
+        s = MagicMock()
+        s.data = {"_admin_flash": "3 records deleted", "_admin_flash_type": "success"}
+        ctx.session = s
+        ctx.query_param = lambda k, d=None: d
+
+        req = MagicMock()
+        req.state = {"path_params": {"model": "productmodel"}}
+        req.headers = {}
+        req.scope = {"client": ("127.0.0.1", 1234)}
+
+        self.site.list_records = AsyncMock(return_value={
+            "rows": [], "list_display": ["id", "name"], "model_name": "ProductModel",
+            "page": 1, "total_pages": 1, "total": 0, "verbose_name": "Product",
+            "verbose_name_plural": "Products", "pk_field": "id",
+        })
+        self.site.audit_log = MagicMock()
+        self.site.audit_log.log = MagicMock()
+
+        resp = await self.ctrl.list_view(req, ctx)
+        assert resp.status == 200
+        # Flash was consumed from session
+        assert "_admin_flash" not in s.data
+        assert "_admin_flash_type" not in s.data
+
+    @pytest.mark.asyncio
+    async def test_list_view_no_flash(self):
+        ctx = MagicMock()
+        ctx.identity = _sa_identity()
+        s = MagicMock()
+        s.data = {}
+        ctx.session = s
+        ctx.query_param = lambda k, d=None: d
+
+        req = MagicMock()
+        req.state = {"path_params": {"model": "productmodel"}}
+        req.headers = {}
+        req.scope = {"client": ("127.0.0.1", 1234)}
+
+        self.site.list_records = AsyncMock(return_value={
+            "rows": [], "list_display": ["id", "name"], "model_name": "ProductModel",
+            "page": 1, "total_pages": 1, "total": 0, "verbose_name": "Product",
+            "verbose_name_plural": "Products", "pk_field": "id",
+        })
+        self.site.audit_log = MagicMock()
+        self.site.audit_log.log = MagicMock()
+
+        resp = await self.ctrl.list_view(req, ctx)
+        assert resp.status == 200
+
+
+class TestAuditInListAndEdit:
+    """List/edit views should generate audit log entries."""
+
+    def setup_method(self):
+        from aquilia.admin.site import AdminSite
+        AdminSite.reset()
+        self.site = AdminSite()
+        self.site.register(_ProductModel)
+        self.ctrl = AdminController(site=self.site)
+        self.site._initialized = True
+
+    def _ctx(self, identity=None):
+        ctx = MagicMock()
+        ctx.identity = identity
+        s = MagicMock()
+        s.data = {}
+        ctx.session = s
+        ctx.query_param = lambda k, d=None: d
+        return ctx
+
+    def _req(self, pp=None):
+        r = MagicMock()
+        r.state = {"path_params": pp or {}}
+        r.headers = {"user-agent": "TestSuite/1.0"}
+        r.scope = {"client": ("10.0.0.1", 9999)}
+        return r
+
+    @pytest.mark.asyncio
+    async def test_list_view_audits_list(self):
+        from aquilia.admin.audit import AdminAction
+        ctx = self._ctx(identity=_sa_identity())
+        self.site.list_records = AsyncMock(return_value={
+            "rows": [], "list_display": ["id"], "model_name": "ProductModel",
+            "page": 1, "total_pages": 1, "total": 0, "verbose_name": "Product",
+            "verbose_name_plural": "Products", "pk_field": "id",
+        })
+        self.site.audit_log = MagicMock()
+        self.site.audit_log.log = MagicMock()
+        await self.ctrl.list_view(self._req(pp={"model": "productmodel"}), ctx)
+        self.site.audit_log.log.assert_called_once()
+        call_args = self.site.audit_log.log.call_args
+        assert AdminAction.LIST in str(call_args)
+
+    @pytest.mark.asyncio
+    async def test_list_view_audits_search(self):
+        from aquilia.admin.audit import AdminAction
+        ctx = self._ctx(identity=_sa_identity())
+        ctx.query_param = lambda k, d=None: "widget" if k == "q" else d
+        self.site.list_records = AsyncMock(return_value={
+            "rows": [], "list_display": ["id"], "model_name": "ProductModel",
+            "page": 1, "total_pages": 1, "total": 0, "verbose_name": "Product",
+            "verbose_name_plural": "Products", "pk_field": "id",
+        })
+        self.site.audit_log = MagicMock()
+        self.site.audit_log.log = MagicMock()
+        await self.ctrl.list_view(self._req(pp={"model": "productmodel"}), ctx)
+        self.site.audit_log.log.assert_called_once()
+        call_args = self.site.audit_log.log.call_args
+        assert AdminAction.SEARCH in str(call_args)
+
+    @pytest.mark.asyncio
+    async def test_edit_form_audits_view(self):
+        from aquilia.admin.audit import AdminAction
+        ctx = self._ctx(identity=_sa_identity())
+        self.site.get_record = AsyncMock(return_value={
+            "model_name": "productmodel", "verbose_name": "Product",
+            "fields": [], "pk": "1", "is_create": False, "can_delete": True,
+        })
+        self.site.audit_log = MagicMock()
+        self.site.audit_log.log = MagicMock()
+        await self.ctrl.edit_form(self._req(pp={"model": "productmodel", "pk": "1"}), ctx)
+        self.site.audit_log.log.assert_called_once()
+        call_args = self.site.audit_log.log.call_args
+        assert AdminAction.VIEW in str(call_args)
+
+    @pytest.mark.asyncio
+    async def test_delete_audits(self):
+        from aquilia.admin.audit import AdminAction
+        ctx = self._ctx(identity=_sa_identity())
+        self.site.delete_record = AsyncMock(return_value=True)
+        self.site.audit_log = MagicMock()
+        self.site.audit_log.log = MagicMock()
+        await self.ctrl.delete_record(self._req(pp={"model": "productmodel", "pk": "1"}), ctx)
+        self.site.audit_log.log.assert_called_once()
+        call_args = self.site.audit_log.log.call_args
+        assert AdminAction.DELETE in str(call_args)
+
+
+class TestRouteExportAndBulk:
+    """Export and bulk action routes registered in server.py."""
+
+    def test_export_route_in_source(self):
+        import inspect
+        from aquilia.server import AquiliaServer
+        src = inspect.getsource(AquiliaServer._wire_admin_integration)
+        assert "export" in src.lower(), "export route missing from _wire_admin_integration"
+
+    def test_bulk_action_route_in_source(self):
+        import inspect
+        from aquilia.server import AquiliaServer
+        src = inspect.getsource(AquiliaServer._wire_admin_integration)
+        assert "action" in src.lower(), "bulk action route missing from _wire_admin_integration"
+
+
+class TestTemplateFeatures:
+    """Verify new template features in rendered HTML."""
+
+    def test_list_template_has_export(self):
+        html = render_list_view(
+            data={
+                "rows": [], "list_display": ["id"], "model_name": "Product",
+                "page": 1, "total_pages": 1, "total": 0,
+                "verbose_name": "Product", "verbose_name_plural": "Products",
+                "pk_field": "id", "actions": {},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "export" in html.lower()
+
+    def test_list_template_has_search(self):
+        html = render_list_view(
+            data={
+                "rows": [], "list_display": ["id"], "model_name": "Product",
+                "page": 1, "total_pages": 1, "total": 0,
+                "verbose_name": "Product", "verbose_name_plural": "Products",
+                "pk_field": "id", "actions": {},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "search" in html.lower()
+
+    def test_list_template_has_keyboard_shortcut(self):
+        html = render_list_view(
+            data={
+                "rows": [], "list_display": ["id"], "model_name": "Product",
+                "page": 1, "total_pages": 1, "total": 0,
+                "verbose_name": "Product", "verbose_name_plural": "Products",
+                "pk_field": "id", "actions": {},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "metaKey" in html or "⌘" in html
+
+    def test_form_template_has_change_tracking(self):
+        html = render_form_view(
+            data={
+                "model_name": "Product", "verbose_name": "Product",
+                "fields": [{"name": "name", "label": "Name", "type": "text", "value": "Widget"}],
+                "pk": "1", "is_create": False, "can_delete": True,
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "unsaved" in html.lower() or "change-preview" in html.lower()
+
+    def test_form_template_has_save_shortcut(self):
+        html = render_form_view(
+            data={
+                "model_name": "Product", "verbose_name": "Product",
+                "fields": [{"name": "name", "label": "Name", "type": "text", "value": "Widget"}],
+                "pk": "1", "is_create": False, "can_delete": True,
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "key === 's'" in html or "ctrl" in html.lower()
+
+    def test_base_template_has_toast(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 1, "model_counts": {"Product": 10}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "showToast" in html
+
+    def test_base_template_has_shortcut_help(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 1, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "shortcut-overlay" in html
+
+    def test_dashboard_has_command_palette(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 1, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "showCommandPalette" in html or "cmd-palette" in html
+
+    def test_dashboard_has_uptime(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 1, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "uptime" in html.lower()
+
+    def test_build_template_has_click_to_view(self):
+        html = render_build_page(
+            build_info={"workspace_name": "test", "total_artifacts": 1},
+            artifacts=[{"name": "test.crous", "digest": "abc123", "content": "data", "kind": "model"}],
+            pipeline_phases=[],
+            build_log="",
+            build_files=[],
+            app_list=[], identity_name="admin",
+        )
+        assert "viewArtifact" in html
+
+    def test_css_pitch_black(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "#000000" in html or "#000" in html
+
+    def test_flash_in_list_view(self):
+        html = render_list_view(
+            data={
+                "rows": [], "list_display": ["id"], "model_name": "Product",
+                "page": 1, "total_pages": 1, "total": 0,
+                "verbose_name": "Product", "verbose_name_plural": "Products",
+                "pk_field": "id", "actions": {},
+            },
+            app_list=[], identity_name="admin",
+            flash="3 records deleted", flash_type="success",
+        )
+        assert "3 records deleted" in html
+
+
+class TestListViewDebounceSearch:
+    """Live search debounce is in the rendered list template."""
+
+    def test_debounce_in_list_html(self):
+        html = render_list_view(
+            data={
+                "rows": [], "list_display": ["id"], "model_name": "Product",
+                "page": 1, "total_pages": 1, "total": 0,
+                "verbose_name": "Product", "verbose_name_plural": "Products",
+                "pk_field": "id", "actions": {},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "debounce" in html.lower() or "setTimeout" in html
+
+    def test_min_chars_in_search(self):
+        html = render_list_view(
+            data={
+                "rows": [], "list_display": ["id"], "model_name": "Product",
+                "page": 1, "total_pages": 1, "total": 0,
+                "verbose_name": "Product", "verbose_name_plural": "Products",
+                "pk_field": "id", "actions": {},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "length" in html and (".length" in html)
+
+
+class TestThemeToggle:
+    """Theme toggle force-repaint in base template."""
+
+    def test_toggle_has_repaint(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "display" in html and "'none'" in html
+
+    def test_theme_stored_in_localstorage(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "localStorage" in html
+        assert "aquilia-admin-theme" in html

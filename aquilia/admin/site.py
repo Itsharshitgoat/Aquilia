@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 from .options import ModelAdmin
 from .permissions import AdminRole, AdminPermission, get_admin_role, has_admin_permission, has_model_permission
+from .permissions import update_role_permissions, set_model_permission_override, get_model_permission_overrides
 from .audit import AdminAuditLog, AdminAction
 from .faults import (
     AdminAuthorizationFault,
@@ -30,6 +31,7 @@ from .faults import (
     AdminRecordNotFoundFault,
     AdminValidationFault,
 )
+from aquilia.controller.pagination import PageNumberPagination
 
 logger = logging.getLogger("aquilia.admin.site")
 
@@ -246,6 +248,571 @@ class AdminSite:
 
         return stats
 
+    # ── Build info ───────────────────────────────────────────────────
+
+    def get_build_info(self) -> Dict[str, Any]:
+        """
+        Gather build information from Crous artifacts in the build directory.
+
+        Scans the workspace build/ directory for .crous files and
+        bundle.manifest.json, returning artifact metadata.
+        """
+        import os
+
+        result: Dict[str, Any] = {
+            "info": {},
+            "artifacts": [],
+            "pipeline_phases": [],
+            "build_log": "",
+        }
+
+        # Find workspace root — look for build/ directory
+        build_dir = self._find_workspace_path("build")
+        if build_dir is None or not build_dir.is_dir():
+            return result
+
+        # Read bundle manifest if it exists
+        manifest_path = build_dir / "bundle.manifest.json"
+        if manifest_path.exists():
+            try:
+                import json
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                result["info"] = {
+                    "workspace_name": manifest.get("workspace_name", ""),
+                    "workspace_version": manifest.get("workspace_version", ""),
+                    "mode": manifest.get("mode", ""),
+                    "fingerprint": manifest.get("fingerprint", ""),
+                    "total_artifacts": manifest.get("artifact_count", 0),
+                    "elapsed_ms": manifest.get("elapsed_ms", 0),
+                }
+            except Exception:
+                pass
+
+        # Scan for .crous files (ignore .aq.json — Crous only)
+        for fpath in sorted(build_dir.iterdir()):
+            if fpath.suffix == ".crous" and fpath.is_file():
+                try:
+                    stat = fpath.stat()
+                    size_kb = stat.st_size / 1024
+                    size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb/1024:.2f} MB"
+
+                    # Compute SHA-256 digest
+                    import hashlib
+                    digest = hashlib.sha256(fpath.read_bytes()).hexdigest()
+
+                    # Determine kind from filename
+                    name = fpath.stem
+                    kind = "bundle" if "bundle" in name else (
+                        "routes" if "route" in name else (
+                        "di_graph" if "di" in name else (
+                        "workspace" if "workspace" in name else "module"
+                    )))
+
+                    result["artifacts"].append({
+                        "name": fpath.name,
+                        "kind": kind,
+                        "size": size_str,
+                        "digest": digest,
+                        "path": str(fpath),
+                    })
+                except Exception:
+                    result["artifacts"].append({
+                        "name": fpath.name,
+                        "kind": "unknown",
+                        "size": "?",
+                        "digest": "",
+                    })
+
+        result["info"]["total_artifacts"] = len(result["artifacts"])
+
+        # Build pipeline phases (static structure)
+        result["pipeline_phases"] = [
+            {"name": "Discovery", "status": "success" if result["artifacts"] else "pending",
+             "detail": "Scan workspace for modules, controllers, models"},
+            {"name": "Validation", "status": "success" if result["artifacts"] else "pending",
+             "detail": "Validate manifest and module configuration"},
+            {"name": "Static Check", "status": "success" if result["artifacts"] else "pending",
+             "detail": "Pre-flight validation of all components"},
+            {"name": "Compilation", "status": "success" if result["artifacts"] else "pending",
+             "detail": "Compile modules to intermediate artifacts"},
+            {"name": "Bundling", "status": "success" if result["artifacts"] else "pending",
+             "detail": "Serialize to Crous binary format with dedup"},
+            {"name": "Fingerprint", "status": "success" if result["info"].get("fingerprint") else "pending",
+             "detail": "Compute content-addressed build fingerprint"},
+        ]
+
+        # Read build log if available
+        build_log_path = build_dir / "build_output.txt"
+        if build_log_path.exists():
+            try:
+                result["build_log"] = build_log_path.read_text(encoding="utf-8")
+            except Exception:
+                pass
+
+        # Read artifact contents for the file viewer
+        for artifact in result["artifacts"]:
+            artifact["content"] = ""
+            artifact["content_type"] = "binary"
+            fpath_str = artifact.get("path", "")
+            if not fpath_str:
+                continue
+            try:
+                from pathlib import Path as _P
+                fpath = _P(fpath_str)
+                raw = fpath.read_bytes()
+
+                # Try Crous decode first
+                try:
+                    from aquilia.build.bundler import _CrousBackend
+                    backend = _CrousBackend()
+                    decoded = backend.decode(raw)
+                    import json as _json
+                    artifact["content"] = _json.dumps(decoded, indent=2, default=str)
+                    artifact["content_type"] = "json"
+                except Exception:
+                    # Fallback: try UTF-8 text
+                    try:
+                        text = raw.decode("utf-8")
+                        artifact["content"] = text
+                        artifact["content_type"] = "text"
+                    except UnicodeDecodeError:
+                        # Show hex dump for binary
+                        hex_lines = []
+                        for offset in range(0, min(len(raw), 2048), 16):
+                            chunk = raw[offset:offset + 16]
+                            hex_part = " ".join(f"{b:02x}" for b in chunk)
+                            ascii_part = "".join(
+                                chr(b) if 32 <= b < 127 else "." for b in chunk
+                            )
+                            hex_lines.append(f"{offset:08x}  {hex_part:<48s}  |{ascii_part}|")
+                        if len(raw) > 2048:
+                            hex_lines.append(f"... ({len(raw)} bytes total, showing first 2048)")
+                        artifact["content"] = "\n".join(hex_lines)
+                        artifact["content_type"] = "hex"
+            except Exception:
+                artifact["content"] = "(unable to read file)"
+                artifact["content_type"] = "error"
+
+        # Also scan for other build files (non-.crous)
+        result["build_files"] = []
+        for fpath in sorted(build_dir.iterdir()):
+            if fpath.is_file() and fpath.suffix != ".crous" and fpath.name != "bundle.manifest.json":
+                try:
+                    content = fpath.read_text(encoding="utf-8")
+                    result["build_files"].append({
+                        "name": fpath.name,
+                        "content": content,
+                        "size": f"{fpath.stat().st_size / 1024:.1f} KB",
+                    })
+                except Exception:
+                    pass
+
+        return result
+
+    # ── Migrations data ──────────────────────────────────────────────
+
+    def get_migrations_data(self) -> List[Dict[str, Any]]:
+        """
+        Scan the migrations directory for migration files and
+        return their metadata and syntax-highlighted source.
+        """
+        import re
+
+        migrations_dir = self._find_workspace_path("migrations")
+        if migrations_dir is None or not migrations_dir.is_dir():
+            return []
+
+        migrations: List[Dict[str, Any]] = []
+
+        for fpath in sorted(migrations_dir.iterdir()):
+            if not fpath.suffix == ".py" or fpath.name.startswith("__"):
+                continue
+
+            try:
+                source = fpath.read_text(encoding="utf-8")
+
+                # Extract metadata from the migration file
+                revision = ""
+                models: List[str] = []
+                operations_count = 0
+
+                # Parse revision from Meta class
+                rev_match = re.search(r'revision\s*=\s*["\']([^"\']+)', source)
+                if rev_match:
+                    revision = rev_match.group(1)
+
+                # Parse model names from Meta.models list
+                models_match = re.search(r'models\s*=\s*\[([^\]]+)\]', source)
+                if models_match:
+                    models = re.findall(r"'(\w+)'", models_match.group(1))
+
+                # Count operations
+                operations_count = len(re.findall(r'(?:CreateModel|CreateIndex|AlterField|AddColumn|DropColumn|RenameField)\(', source))
+
+                # Syntax highlight the source
+                highlighted = self._highlight_python(source)
+
+                migrations.append({
+                    "filename": fpath.name,
+                    "revision": revision,
+                    "models": models,
+                    "operations_count": operations_count,
+                    "source": source,
+                    "source_highlighted": highlighted,
+                })
+            except Exception:
+                migrations.append({
+                    "filename": fpath.name,
+                    "revision": "",
+                    "models": [],
+                    "operations_count": 0,
+                    "source": "",
+                })
+
+        return migrations
+
+    # ── Config data ──────────────────────────────────────────────────
+
+    def get_config_data(self) -> Dict[str, Any]:
+        """
+        Read workspace YAML configuration files and workspace.py.
+
+        Returns file contents for display in the admin config page.
+        """
+        result: Dict[str, Any] = {
+            "files": [],
+            "workspace": None,
+        }
+
+        config_dir = self._find_workspace_path("config")
+        if config_dir and config_dir.is_dir():
+            for fname in ["base.yaml", "dev.yaml", "prod.yaml", "test.yaml"]:
+                fpath = config_dir / fname
+                if fpath.exists():
+                    try:
+                        content = fpath.read_text(encoding="utf-8")
+                        result["files"].append({
+                            "name": fname,
+                            "path": f"config/{fname}",
+                            "content": content,
+                            "content_highlighted": self._highlight_yaml(content),
+                        })
+                    except Exception:
+                        pass
+
+        # Read workspace.py for workspace info
+        ws_path = self._find_workspace_path("workspace.py", is_file=True)
+        if ws_path and ws_path.exists():
+            try:
+                ws_source = ws_path.read_text(encoding="utf-8")
+                import re
+
+                # Extract workspace name
+                name_match = re.search(r'(?:Workspace\(\s*["\'](\w+)|name\s*=\s*["\'](\w+))', ws_source)
+                ws_name = (name_match.group(1) or name_match.group(2)) if name_match else ""
+
+                # Extract version
+                ver_match = re.search(r'version\s*=\s*["\']([^"\']+)', ws_source)
+                ws_version = ver_match.group(1) if ver_match else ""
+
+                # Extract modules
+                module_matches = re.findall(r'Module\(\s*["\'](\w+)', ws_source)
+
+                # Extract integrations
+                intg_matches = re.findall(r'Integration\(\s*["\'](\w+)', ws_source)
+
+                result["workspace"] = {
+                    "name": ws_name,
+                    "version": ws_version,
+                    "modules": module_matches,
+                    "integrations": intg_matches,
+                }
+
+                # Also add workspace.py as a config file
+                result["files"].append({
+                    "name": "workspace.py",
+                    "path": "workspace.py",
+                    "content": ws_source,
+                    "content_highlighted": self._highlight_python(ws_source),
+                })
+            except Exception:
+                pass
+
+        return result
+
+    # ── Permissions data ─────────────────────────────────────────────
+
+    def get_permissions_data(self, identity: Optional["Identity"] = None) -> Dict[str, Any]:
+        """
+        Gather permission roles, matrix, and per-model permissions.
+        """
+        from .permissions import AdminRole, AdminPermission, ROLE_PERMISSIONS
+
+        roles = []
+        role_descriptions = {
+            AdminRole.SUPERADMIN: "Full access to everything — all admin operations.",
+            AdminRole.ADMIN: "Full CRUD on all models, audit log, user management.",
+            AdminRole.STAFF: "View and edit access — no delete by default.",
+            AdminRole.VIEWER: "Read-only access to admin dashboard and data.",
+        }
+
+        for role in AdminRole:
+            perms = ROLE_PERMISSIONS.get(role, set())
+            roles.append({
+                "name": role.value,
+                "level": role.level,
+                "description": role_descriptions.get(role, ""),
+                "permissions": sorted(p.value for p in perms),
+            })
+
+        # Sort by level descending (highest first)
+        roles.sort(key=lambda r: r["level"], reverse=True)
+
+        all_permissions = sorted(p.value for p in AdminPermission)
+
+        # Model-level permissions for current identity
+        model_permissions = []
+        for model_cls, admin in self._registry.items():
+            model_permissions.append({
+                "name": model_cls.__name__,
+                "perms": {
+                    "view": admin.has_view_permission(identity),
+                    "add": admin.has_add_permission(identity),
+                    "change": admin.has_change_permission(identity),
+                    "delete": admin.has_delete_permission(identity),
+                    "export": True,  # Tied to MODEL_EXPORT permission
+                },
+            })
+
+        return {
+            "roles": roles,
+            "all_permissions": all_permissions,
+            "model_permissions": model_permissions,
+        }
+
+    def update_permissions(
+        self,
+        form_data: Dict[str, Any],
+        identity: Optional["Identity"] = None,
+    ) -> Dict[str, Any]:
+        """
+        Update role permissions and/or model permission overrides from
+        form POST data.
+
+        Form data expected:
+        - Role permissions: keys like "role_<role_name>_<permission_value>" with value "on"
+        - Model permissions: keys like "model_<model_name>_<action>" with value "on"
+        - update_type: "roles" or "models" to indicate which tab submitted
+
+        Returns dict with status and message.
+        """
+        from .permissions import (
+            AdminRole, AdminPermission, ROLE_PERMISSIONS,
+            update_role_permissions as _update_role,
+            set_model_permission_override,
+        )
+
+        update_type = form_data.get("update_type", "roles")
+        changes = 0
+
+        if update_type == "roles":
+            # Process role permission matrix
+            for role in AdminRole:
+                if role == AdminRole.SUPERADMIN:
+                    continue  # Can't modify superadmin
+
+                current_perms = ROLE_PERMISSIONS.get(role, set())
+
+                for perm in AdminPermission:
+                    key = f"role_{role.value}_{perm.value}"
+                    should_have = key in form_data
+                    currently_has = perm in current_perms
+
+                    if should_have != currently_has:
+                        _update_role(role, perm, granted=should_have)
+                        changes += 1
+
+                        # Audit the change
+                        self.audit_log.log(
+                            user_id=identity.id if identity else "system",
+                            username=identity.get_attribute("username", identity.id) if identity else "system",
+                            role=str(get_admin_role(identity) or "unknown") if identity else "system",
+                            action=AdminAction.PERMISSION_CHANGE,
+                            model_name=f"Role:{role.value}",
+                            changes={perm.value: {"old": str(currently_has), "new": str(should_have)}},
+                        )
+
+        elif update_type == "models":
+            # Process model permission overrides
+            for model_cls in self._registry:
+                model_name = model_cls.__name__
+                for action in ["view", "add", "change", "delete", "export"]:
+                    key = f"model_{model_name}_{action}"
+                    allowed = key in form_data
+                    set_model_permission_override(model_name, action, allowed=allowed)
+                    changes += 1
+
+            if changes:
+                self.audit_log.log(
+                    user_id=identity.id if identity else "system",
+                    username=identity.get_attribute("username", identity.id) if identity else "system",
+                    role=str(get_admin_role(identity) or "unknown") if identity else "system",
+                    action=AdminAction.PERMISSION_CHANGE,
+                    model_name="ModelPermissions",
+                    changes={"type": "model_override_update", "changes_count": changes},
+                )
+
+        return {
+            "status": "success",
+            "message": f"Updated {changes} permission(s) successfully.",
+            "changes": changes,
+        }
+
+    # ── Helpers ───────────────────────────────────────────────────────
+
+    def _find_workspace_path(self, name: str, is_file: bool = False) -> Optional["Path"]:
+        """
+        Find a file/directory in the workspace root.
+
+        Tries common workspace locations relative to CWD.
+        """
+        from pathlib import Path
+        import os
+
+        # Check common workspace roots
+        candidates = [
+            Path(os.getcwd()) / name,
+            Path(os.getcwd()) / "myapp" / name,
+        ]
+
+        # Also try the workspace root from sys.path hints
+        for p in candidates:
+            if is_file and p.is_file():
+                return p
+            if not is_file and p.is_dir():
+                return p
+
+        return None
+
+    @staticmethod
+    def _highlight_python(source: str) -> str:
+        """
+        Apply simple syntax highlighting to Python source code.
+
+        Uses CSS classes matching the aqdocx code block theme:
+        .kw, .str, .num, .fn, .cls, .cmt, .dec, .op, .var, .prop
+        """
+        import re
+        import html as html_mod
+
+        lines = source.split('\n')
+        result_lines = []
+
+        for i, line in enumerate(lines, 1):
+            escaped = html_mod.escape(line)
+
+            # Order matters — comments first, then strings, then others
+            # Comments
+            escaped = re.sub(
+                r'(#.*?)$',
+                r'<span class="cmt">\1</span>',
+                escaped,
+            )
+
+            # Strings (triple-quoted and single/double)
+            escaped = re.sub(
+                r'(&quot;&quot;&quot;.*?&quot;&quot;&quot;|&#x27;&#x27;&#x27;.*?&#x27;&#x27;&#x27;|&quot;[^&]*?&quot;|&#x27;[^&]*?&#x27;)',
+                r'<span class="str">\1</span>',
+                escaped,
+            )
+
+            # Decorators
+            escaped = re.sub(
+                r'^(\s*)(@\w+)',
+                r'\1<span class="dec">\2</span>',
+                escaped,
+            )
+
+            # Keywords
+            keywords = r'\b(def|class|import|from|return|if|elif|else|for|while|with|as|try|except|finally|raise|pass|break|continue|yield|async|await|not|and|or|in|is|None|True|False|self|lambda)\b'
+            escaped = re.sub(
+                keywords,
+                r'<span class="kw">\1</span>',
+                escaped,
+            )
+
+            # Numbers
+            escaped = re.sub(
+                r'\b(\d+\.?\d*)\b',
+                r'<span class="num">\1</span>',
+                escaped,
+            )
+
+            # Function calls
+            escaped = re.sub(
+                r'\b(\w+)(\()',
+                r'<span class="fn">\1</span>\2',
+                escaped,
+            )
+
+            line_num = f'<span class="code-line-num">{i}</span>'
+            result_lines.append(f'{line_num}{escaped}')
+
+        return '\n'.join(result_lines)
+
+    @staticmethod
+    def _highlight_yaml(source: str) -> str:
+        """Apply simple syntax highlighting to YAML source."""
+        import re
+        import html as html_mod
+
+        lines = source.split('\n')
+        result_lines = []
+
+        for i, line in enumerate(lines, 1):
+            escaped = html_mod.escape(line)
+
+            # Comments
+            escaped = re.sub(
+                r'(#.*?)$',
+                r'<span class="cmt">\1</span>',
+                escaped,
+            )
+
+            # Keys (word followed by colon)
+            escaped = re.sub(
+                r'^(\s*)([\w\-]+)(:)',
+                r'\1<span class="kw">\2</span>\3',
+                escaped,
+            )
+
+            # Strings
+            escaped = re.sub(
+                r'(&quot;[^&]*?&quot;|&#x27;[^&]*?&#x27;)',
+                r'<span class="str">\1</span>',
+                escaped,
+            )
+
+            # Numbers
+            escaped = re.sub(
+                r':\s*(\d+\.?\d*)\s*$',
+                r': <span class="num">\1</span>',
+                escaped,
+            )
+
+            # Booleans
+            escaped = re.sub(
+                r':\s*(true|false|yes|no|null)\s*$',
+                r': <span class="kw">\1</span>',
+                escaped,
+                flags=re.IGNORECASE,
+            )
+
+            line_num = f'<span class="code-line-num">{i}</span>'
+            result_lines.append(f'{line_num}{escaped}')
+
+        return '\n'.join(result_lines)
+
     # ── CRUD operations ──────────────────────────────────────────────
 
     async def list_records(
@@ -261,6 +828,9 @@ class AdminSite:
     ) -> Dict[str, Any]:
         """
         List records for a model with pagination, search, and filtering.
+
+        Uses ``PageNumberPagination`` from ``aquilia.controller.pagination``
+        for consistent, framework-standard pagination behaviour.
 
         Returns dict with records, total count, and pagination info.
         """
@@ -300,26 +870,44 @@ class AdminSite:
             if default_ordering:
                 qs = qs.order(*default_ordering)
 
-        # Get total count
-        total = await qs.count()
+        # ── Paginate via PageNumberPagination ────────────────────────
+        paginator = PageNumberPagination(page_size=per_page)
 
-        # Apply pagination
-        offset = (page - 1) * per_page
-        records = await qs.limit(per_page).offset(offset).all()
+        # Build a lightweight request-like object that PageNumberPagination
+        # can extract query params from (it calls _get_current_params which
+        # looks for ``request.query_params``).
+        _fake_request = type("_R", (), {
+            "query_params": {
+                paginator.page_param: str(page),
+                paginator.page_size_param: str(per_page),
+            },
+            "scope": {"scheme": "http", "headers": [], "path": f"/admin/{model_name}/"},
+        })()
+
+        paginated = await paginator.paginate_queryset(qs, _fake_request)
+
+        total = paginated["count"]
+        total_pages = paginated["total_pages"]
+        records_raw = paginated["results"]
 
         # Format records for display
         list_display = admin.get_list_display()
         rows = []
-        for record in records:
-            row = {"pk": record.pk}
-            for field_name in list_display:
-                value = getattr(record, field_name, None)
-                row[field_name] = admin.format_value(field_name, value)
-                row[f"_raw_{field_name}"] = value
+        for record_data in records_raw:
+            # paginate_queryset calls to_dict(); we may get dicts or model instances
+            if isinstance(record_data, dict):
+                row = {"pk": record_data.get("pk") or record_data.get("id")}
+                for field_name in list_display:
+                    raw_val = record_data.get(field_name)
+                    row[field_name] = admin.format_value(field_name, raw_val)
+                    row[f"_raw_{field_name}"] = raw_val
+            else:
+                row = {"pk": record_data.pk}
+                for field_name in list_display:
+                    value = getattr(record_data, field_name, None)
+                    row[field_name] = admin.format_value(field_name, value)
+                    row[f"_raw_{field_name}"] = value
             rows.append(row)
-
-        # Pagination info
-        total_pages = max(1, (total + per_page - 1) // per_page)
 
         return {
             "rows": rows,
@@ -327,8 +915,10 @@ class AdminSite:
             "page": page,
             "per_page": per_page,
             "total_pages": total_pages,
-            "has_next": page < total_pages,
-            "has_prev": page > 1,
+            "has_next": paginated["next"] is not None,
+            "has_prev": paginated["previous"] is not None,
+            "next_url": paginated["next"],
+            "previous_url": paginated["previous"],
             "list_display": list_display,
             "list_filter": admin.get_list_filter(),
             "search_fields": admin.get_search_fields(),

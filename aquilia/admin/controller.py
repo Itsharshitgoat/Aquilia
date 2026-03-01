@@ -39,12 +39,42 @@ from .templates import (
     render_list_view,
     render_form_view,
     render_audit_page,
+    render_orm_page,
+    render_build_page,
+    render_migrations_page,
+    render_config_page,
+    render_permissions_page,
 )
 
 if TYPE_CHECKING:
     from aquilia.auth.core import Identity
 
 logger = logging.getLogger("aquilia.admin.controller")
+
+
+def _extract_request_meta(request) -> dict:
+    """Extract IP address and user agent from request for audit logging."""
+    ip_address = None
+    user_agent = None
+    try:
+        # Try X-Forwarded-For first, then X-Real-IP, then peer info
+        if hasattr(request, 'headers'):
+            hdrs = request.headers
+            if hasattr(hdrs, 'get'):
+                forwarded = hdrs.get('x-forwarded-for')
+                if forwarded:
+                    # Take the first IP (client IP) from comma-separated list
+                    ip_address = forwarded.split(',')[0].strip()
+                else:
+                    ip_address = hdrs.get('x-real-ip')
+                user_agent = hdrs.get('user-agent')
+        if not ip_address and hasattr(request, 'scope'):
+            client = request.scope.get('client')
+            if client and isinstance(client, (list, tuple)) and len(client) >= 1:
+                ip_address = str(client[0])
+    except Exception:
+        pass
+    return {"ip_address": ip_address or "", "user_agent": user_agent or ""}
 
 
 def _html_response(html_content: str, status: int = 200) -> Response:
@@ -164,7 +194,8 @@ class AdminController(Controller):
         an admin session.
         """
         try:
-            form_data = await ctx.form()
+            raw_form = await ctx.form()
+            form_data = raw_form.fields.to_dict() if hasattr(raw_form, 'fields') else (dict(raw_form) if isinstance(raw_form, dict) else {})
         except Exception:
             form_data = {}
 
@@ -180,6 +211,7 @@ class AdminController(Controller):
 
         if identity is None:
             # Log failed attempt
+            meta = _extract_request_meta(request)
             self.site.audit_log.log(
                 user_id="unknown",
                 username=username,
@@ -187,6 +219,8 @@ class AdminController(Controller):
                 action=AdminAction.LOGIN_FAILED,
                 success=False,
                 error_message="Invalid credentials",
+                ip_address=meta.get("ip_address"),
+                user_agent=meta.get("user_agent"),
             )
             return _html_response(render_login_page(error="Invalid credentials"), 401)
 
@@ -195,11 +229,14 @@ class AdminController(Controller):
             ctx.session.data["_admin_identity"] = identity.to_dict()
 
         # Log successful login
+        meta = _extract_request_meta(request)
         self.site.audit_log.log(
             user_id=identity.id,
             username=_get_identity_name(identity),
             role=str(get_admin_role(identity) or "unknown"),
             action=AdminAction.LOGIN,
+            ip_address=meta.get("ip_address"),
+            user_agent=meta.get("user_agent"),
         )
 
         return _redirect("/admin/")
@@ -210,11 +247,14 @@ class AdminController(Controller):
         identity = _get_identity(ctx)
 
         if identity:
+            meta = _extract_request_meta(request)
             self.site.audit_log.log(
                 user_id=identity.id,
                 username=_get_identity_name(identity),
                 role=str(get_admin_role(identity) or "unknown"),
                 action=AdminAction.LOGOUT,
+                ip_address=meta.get("ip_address"),
+                user_agent=meta.get("user_agent"),
             )
 
         # Clear admin session data
@@ -241,6 +281,13 @@ class AdminController(Controller):
         if not self.site._initialized:
             self.site.initialize()
 
+        # Check for flash message
+        flash = ""
+        flash_type = "success"
+        if ctx.session and hasattr(ctx.session, "data"):
+            flash = ctx.session.data.pop("_admin_flash", "")
+            flash_type = ctx.session.data.pop("_admin_flash_type", "success")
+
         # Parse query params
         search = ctx.query_param("q", "")
         page_str = ctx.query_param("page", "1")
@@ -262,6 +309,32 @@ class AdminController(Controller):
                 404,
             )
 
+        # Audit: log list/search access
+        if identity and self.site.audit_log:
+            meta = _extract_request_meta(request)
+            if search:
+                self.site.audit_log.log(
+                    user_id=getattr(identity, "id", ""),
+                    username=_get_identity_name(identity),
+                    role=str(get_admin_role(identity) or "unknown"),
+                    action=AdminAction.SEARCH,
+                    model_name=model,
+                    ip_address=meta.get("ip_address"),
+                    user_agent=meta.get("user_agent"),
+                    metadata={"query": search, "page": page},
+                )
+            else:
+                self.site.audit_log.log(
+                    user_id=getattr(identity, "id", ""),
+                    username=_get_identity_name(identity),
+                    role=str(get_admin_role(identity) or "unknown"),
+                    action=AdminAction.LIST,
+                    model_name=model,
+                    ip_address=meta.get("ip_address"),
+                    user_agent=meta.get("user_agent"),
+                    metadata={"page": page},
+                )
+
         # Get actions for the model
         try:
             admin_obj = self.site.get_model_admin(model)
@@ -275,6 +348,8 @@ class AdminController(Controller):
             data=data,
             app_list=app_list,
             identity_name=_get_identity_name(identity),
+            flash=flash,
+            flash_type=flash_type,
         )
         return _html_response(html)
 
@@ -346,7 +421,9 @@ class AdminController(Controller):
             self.site.initialize()
 
         try:
-            form_data = await ctx.form()
+            raw_form = await ctx.form()
+            # FormData -> dict (FormData has .get() but no .items())
+            form_data = raw_form.fields.to_dict() if hasattr(raw_form, 'fields') else (dict(raw_form) if isinstance(raw_form, dict) else {})
         except Exception:
             form_data = {}
 
@@ -412,6 +489,20 @@ class AdminController(Controller):
         except Exception as e:
             return _html_response(str(e), 404)
 
+        # Audit: log record view
+        if identity and self.site.audit_log:
+            meta = _extract_request_meta(request)
+            self.site.audit_log.log(
+                user_id=getattr(identity, "id", ""),
+                username=_get_identity_name(identity),
+                role=str(get_admin_role(identity) or "unknown"),
+                action=AdminAction.VIEW,
+                model_name=model,
+                record_pk=str(pk),
+                ip_address=meta.get("ip_address"),
+                user_agent=meta.get("user_agent"),
+            )
+
         app_list = self.site.get_app_list(identity)
         html = render_form_view(
             data=data,
@@ -439,7 +530,9 @@ class AdminController(Controller):
             self.site.initialize()
 
         try:
-            form_data = await ctx.form()
+            raw_form = await ctx.form()
+            # FormData -> dict (FormData has .get() but no .items())
+            form_data = raw_form.fields.to_dict() if hasattr(raw_form, 'fields') else (dict(raw_form) if isinstance(raw_form, dict) else {})
         except Exception:
             form_data = {}
 
@@ -486,10 +579,355 @@ class AdminController(Controller):
 
         try:
             await self.site.delete_record(model, pk, identity=identity)
+            # Audit: log delete
+            if identity and self.site.audit_log:
+                meta = _extract_request_meta(request)
+                self.site.audit_log.log(
+                    user_id=getattr(identity, "id", ""),
+                    username=_get_identity_name(identity),
+                    role=str(get_admin_role(identity) or "unknown"),
+                    action=AdminAction.DELETE,
+                    model_name=model,
+                    record_pk=str(pk),
+                    ip_address=meta.get("ip_address"),
+                    user_agent=meta.get("user_agent"),
+                )
         except Exception as e:
             logger.warning("Admin delete failed: %s", e)
 
         return _redirect(f"/admin/{model.lower()}/")
+
+    # ── Bulk Actions ─────────────────────────────────────────────────
+
+    @POST("/{model}/action")
+    async def bulk_action(self, request, ctx: RequestCtx) -> Response:
+        """Execute a bulk action on selected records."""
+        model = request.state.get("path_params", {}).get("model", "")
+        identity = _get_identity(ctx)
+        if identity is None:
+            return _redirect("/admin/login")
+
+        try:
+            require_admin_access(identity)
+        except AdminAuthorizationFault:
+            return _redirect("/admin/login")
+
+        if not self.site._initialized:
+            self.site.initialize()
+
+        try:
+            raw_form = await ctx.form()
+            form_data = raw_form.fields.to_dict(multi=True) if hasattr(raw_form, 'fields') else {}
+        except Exception:
+            form_data = {}
+
+        action_name = form_data.get("action", "") if isinstance(form_data.get("action"), str) else (form_data.get("action", [""])[0] if isinstance(form_data.get("action"), list) else "")
+        selected_raw = form_data.get("selected", [])
+        if isinstance(selected_raw, str):
+            selected_raw = [selected_raw]
+        selected_pks = [pk for pk in selected_raw if pk]
+
+        if not action_name or not selected_pks:
+            return _redirect(f"/admin/{model.lower()}/")
+
+        try:
+            result = await self.site.execute_action(
+                model, action_name, selected_pks, identity=identity,
+            )
+            # Audit: log bulk action
+            if identity and self.site.audit_log:
+                meta = _extract_request_meta(request)
+                self.site.audit_log.log(
+                    user_id=getattr(identity, "id", ""),
+                    username=_get_identity_name(identity),
+                    role=str(get_admin_role(identity) or "unknown"),
+                    action=AdminAction.BULK_ACTION,
+                    model_name=model,
+                    ip_address=meta.get("ip_address"),
+                    user_agent=meta.get("user_agent"),
+                    metadata={"action": action_name, "pks": selected_pks, "count": len(selected_pks)},
+                )
+            if ctx.session and hasattr(ctx.session, "data"):
+                ctx.session.data["_admin_flash"] = result
+                ctx.session.data["_admin_flash_type"] = "success"
+        except Exception as e:
+            if ctx.session and hasattr(ctx.session, "data"):
+                ctx.session.data["_admin_flash"] = str(e)
+                ctx.session.data["_admin_flash_type"] = "error"
+
+        return _redirect(f"/admin/{model.lower()}/")
+
+    # ── Export ────────────────────────────────────────────────────────
+
+    @GET("/{model}/export")
+    async def export_view(self, request, ctx: RequestCtx) -> Response:
+        """Export model data as CSV or JSON."""
+        model = request.state.get("path_params", {}).get("model", "")
+        identity = _get_identity(ctx)
+        if identity is None:
+            return _redirect("/admin/login")
+
+        try:
+            require_admin_access(identity)
+        except AdminAuthorizationFault:
+            return _redirect("/admin/login")
+
+        if not self.site._initialized:
+            self.site.initialize()
+
+        fmt = ctx.query_param("format", "csv")
+
+        try:
+            data = await self.site.list_records(
+                model, page=1, per_page=10000, identity=identity,
+            )
+        except Exception as e:
+            return _html_response(str(e), 404)
+
+        rows = data.get("rows", [])
+        columns = data.get("list_display", [])
+        model_name = data.get("model_name", model)
+
+        # Audit log
+        if identity:
+            self.site.audit_log.log(
+                user_id=identity.id,
+                username=_get_identity_name(identity),
+                role=str(get_admin_role(identity) or "unknown"),
+                action=AdminAction.EXPORT,
+                model_name=model_name,
+                metadata={"format": fmt, "count": len(rows)},
+            )
+
+        if fmt == "json":
+            import json
+            export_rows = []
+            for row in rows:
+                export_rows.append({col: row.get(col, "") for col in columns})
+            content = json.dumps(export_rows, indent=2, default=str)
+            return Response(
+                content=content.encode("utf-8"),
+                status=200,
+                headers={
+                    "content-type": "application/json; charset=utf-8",
+                    "content-disposition": f'attachment; filename="{model_name}.json"',
+                },
+            )
+        else:
+            # CSV export
+            import csv
+            import io
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow(columns)
+            for row in rows:
+                writer.writerow([row.get(col, "") for col in columns])
+            content = buf.getvalue()
+            return Response(
+                content=content.encode("utf-8"),
+                status=200,
+                headers={
+                    "content-type": "text/csv; charset=utf-8",
+                    "content-disposition": f'attachment; filename="{model_name}.csv"',
+                },
+            )
+
+    # ── ORM Models Page ──────────────────────────────────────────────
+
+    @GET("/orm/")
+    async def orm_view(self, request, ctx: RequestCtx) -> Response:
+        """ORM models overview — all registered models with counts."""
+        identity = _get_identity(ctx)
+        if identity is None:
+            return _redirect("/admin/login")
+
+        try:
+            require_admin_access(identity)
+        except AdminAuthorizationFault:
+            return _redirect("/admin/login")
+
+        if not self.site._initialized:
+            self.site.initialize()
+
+        app_list = self.site.get_app_list(identity)
+        stats = await self.site.get_dashboard_stats()
+
+        html = render_orm_page(
+            app_list=app_list,
+            model_counts=stats.get("model_counts", {}),
+            identity_name=_get_identity_name(identity),
+        )
+        return _html_response(html)
+
+    # ── Build Page ───────────────────────────────────────────────────
+
+    @GET("/build/")
+    async def build_view(self, request, ctx: RequestCtx) -> Response:
+        """Build page — Crous artifacts and pipeline status."""
+        identity = _get_identity(ctx)
+        if identity is None:
+            return _redirect("/admin/login")
+
+        try:
+            require_admin_access(identity)
+        except AdminAuthorizationFault:
+            return _redirect("/admin/login")
+
+        if not self.site._initialized:
+            self.site.initialize()
+
+        build_data = self.site.get_build_info()
+        app_list = self.site.get_app_list(identity)
+
+        html = render_build_page(
+            build_info=build_data.get("info", {}),
+            artifacts=build_data.get("artifacts", []),
+            pipeline_phases=build_data.get("pipeline_phases", []),
+            build_log=build_data.get("build_log", ""),
+            build_files=build_data.get("build_files", []),
+            app_list=app_list,
+            identity_name=_get_identity_name(identity),
+        )
+        return _html_response(html)
+
+    # ── Migrations Page ──────────────────────────────────────────────
+
+    @GET("/migrations/")
+    async def migrations_view(self, request, ctx: RequestCtx) -> Response:
+        """Migrations page — list all migrations with syntax-highlighted source."""
+        identity = _get_identity(ctx)
+        if identity is None:
+            return _redirect("/admin/login")
+
+        try:
+            require_admin_access(identity)
+        except AdminAuthorizationFault:
+            return _redirect("/admin/login")
+
+        if not self.site._initialized:
+            self.site.initialize()
+
+        migrations = self.site.get_migrations_data()
+        app_list = self.site.get_app_list(identity)
+
+        html = render_migrations_page(
+            migrations=migrations,
+            app_list=app_list,
+            identity_name=_get_identity_name(identity),
+        )
+        return _html_response(html)
+
+    # ── Config Page ──────────────────────────────────────────────────
+
+    @GET("/config/")
+    async def config_view(self, request, ctx: RequestCtx) -> Response:
+        """Configuration page — show workspace YAML configuration."""
+        identity = _get_identity(ctx)
+        if identity is None:
+            return _redirect("/admin/login")
+
+        try:
+            require_admin_access(identity)
+        except AdminAuthorizationFault:
+            return _redirect("/admin/login")
+
+        if not self.site._initialized:
+            self.site.initialize()
+
+        config_data = self.site.get_config_data()
+        app_list = self.site.get_app_list(identity)
+
+        html = render_config_page(
+            config_files=config_data.get("files", []),
+            workspace_info=config_data.get("workspace", None),
+            app_list=app_list,
+            identity_name=_get_identity_name(identity),
+        )
+        return _html_response(html)
+
+    # ── Permissions Page ─────────────────────────────────────────────
+
+    @GET("/permissions/")
+    async def permissions_view(self, request, ctx: RequestCtx) -> Response:
+        """Permissions page — role matrix and per-model access."""
+        identity = _get_identity(ctx)
+        if identity is None:
+            return _redirect("/admin/login")
+
+        try:
+            require_admin_access(identity)
+        except AdminAuthorizationFault:
+            return _redirect("/admin/login")
+
+        if not self.site._initialized:
+            self.site.initialize()
+
+        # Check for flash message from permissions update
+        flash = ""
+        flash_type = "success"
+        if ctx.session and hasattr(ctx.session, "data"):
+            flash = ctx.session.data.pop("_admin_flash", "")
+            flash_type = ctx.session.data.pop("_admin_flash_type", "success")
+
+        perms_data = self.site.get_permissions_data(identity)
+        app_list = self.site.get_app_list(identity)
+
+        html = render_permissions_page(
+            roles=perms_data.get("roles", []),
+            all_permissions=perms_data.get("all_permissions", []),
+            model_permissions=perms_data.get("model_permissions", []),
+            app_list=app_list,
+            identity_name=_get_identity_name(identity),
+            flash=flash,
+            flash_type=flash_type,
+        )
+        return _html_response(html)
+
+    @POST("/permissions/update")
+    async def permissions_update(self, request, ctx: RequestCtx) -> Response:
+        """Handle permission updates from the permissions page form."""
+        identity = _get_identity(ctx)
+        if identity is None:
+            return _redirect("/admin/login")
+
+        # Only superadmins can modify permissions
+        role = get_admin_role(identity)
+        if role is None:
+            if ctx.session and hasattr(ctx.session, "data"):
+                ctx.session.data["_admin_flash"] = "Only superadmins can modify permissions."
+                ctx.session.data["_admin_flash_type"] = "error"
+            return _redirect("/admin/permissions/")
+
+        from .permissions import AdminRole as _AR
+        if role != _AR.SUPERADMIN:
+            if ctx.session and hasattr(ctx.session, "data"):
+                ctx.session.data["_admin_flash"] = "Only superadmins can modify permissions."
+                ctx.session.data["_admin_flash_type"] = "error"
+            return _redirect("/admin/permissions/")
+
+        if not self.site._initialized:
+            self.site.initialize()
+
+        # Parse form data
+        try:
+            body = await request.body()
+            form_data = {}
+            for pair in body.decode("utf-8").split("&"):
+                if "=" in pair:
+                    from urllib.parse import unquote_plus
+                    key, val = pair.split("=", 1)
+                    form_data[unquote_plus(key)] = unquote_plus(val)
+        except Exception:
+            form_data = {}
+
+        result = self.site.update_permissions(form_data, identity)
+
+        # Flash the result message
+        if ctx.session and hasattr(ctx.session, "data"):
+            ctx.session.data["_admin_flash"] = result.get("message", "Permissions updated.")
+            ctx.session.data["_admin_flash_type"] = result.get("status", "success")
+
+        return _redirect("/admin/permissions/")
 
     # ── Audit Log ────────────────────────────────────────────────────
 

@@ -36,6 +36,8 @@ class AdminAction(str, Enum):
     BULK_ACTION = "bulk_action"
     EXPORT = "export"
     SETTINGS_CHANGE = "settings_change"
+    SEARCH = "search"
+    PERMISSION_CHANGE = "permission_change"
 
 
 @dataclass(frozen=True)
