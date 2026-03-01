@@ -22,17 +22,13 @@
         <div class="stat-number">{{ recent_actions|length }}</div>
         <div class="stat-label"><i class="icon-activity" style="font-size:12px;vertical-align:-1px;margin-right:3px;opacity:0.5;"></i>Changes</div>
     </div>
-    <div class="stat-item">
-        <div class="stat-number" id="uptime-display">—</div>
-        <div class="stat-label"><i class="icon-clock" style="font-size:12px;vertical-align:-1px;margin-right:3px;opacity:0.5;"></i>Session</div>
-    </div>
 </div>
 
 {# ── Global command palette trigger ── #}
-<div id="cmd-trigger" onclick="showCommandPalette()" style="margin-bottom:24px;padding:12px 18px;background:rgba(0,0,0,0.4);border:1px solid var(--border-subtle);border-radius:var(--radius);cursor:pointer;display:flex;align-items:center;gap:10px;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border-subtle)'">
+<div id="cmd-trigger" onclick="showCommandPalette()" style="margin-bottom:24px;padding:12px 18px;background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius);cursor:pointer;display:flex;align-items:center;gap:10px;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border-subtle)'">
     <i class="icon-search" style="font-size:16px;color:var(--text-faint);"></i>
     <span style="font-size:0.84rem;color:var(--text-faint);flex:1;">Quick navigation…</span>
-    <kbd style="background:rgba(255,255,255,0.06);padding:2px 8px;border-radius:4px;font-size:0.7rem;color:var(--text-faint);font-family:var(--font-mono);border:1px solid var(--border-subtle);">⌘K</kbd>
+    <kbd style="background:var(--bg-surface);padding:2px 8px;border-radius:4px;font-size:0.7rem;color:var(--text-faint);font-family:var(--font-mono);border:1px solid var(--border-color);">⌘K</kbd>
 </div>
 
 {# ── Quick navigation cards ── #}
@@ -131,23 +127,11 @@
 
 {% block extra_js %}
 <script>
-// Session uptime timer
-(function() {
-    var start = Date.now();
-    function updateUptime() {
-        var s = Math.floor((Date.now() - start) / 1000);
-        var m = Math.floor(s / 60); s = s % 60;
-        var h = Math.floor(m / 60); m = m % 60;
-        var display = document.getElementById('uptime-display');
-        if (display) display.textContent = (h ? h + 'h ' : '') + m + 'm ' + s + 's';
-    }
-    setInterval(updateUptime, 1000);
-    updateUptime();
-})();
-// Command palette
+// Command palette (light/dark mode aware)
 window.showCommandPalette = function() {
     var existing = document.getElementById('cmd-palette');
     if (existing) { existing.remove(); return; }
+    var isDark = document.documentElement.getAttribute('data-theme') !== 'light';
     var items = [
         { label: 'Dashboard', icon: 'home', url: '{{ url_prefix|default("/admin") }}/' },
         { label: 'ORM Models', icon: 'database', url: '{{ url_prefix|default("/admin") }}/orm/' },
@@ -162,24 +146,26 @@ window.showCommandPalette = function() {
     ];
     var overlay = document.createElement('div');
     overlay.id = 'cmd-palette';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10002;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;backdrop-filter:blur(4px);';
+    overlay.style.cssText = 'position:fixed;inset:0;background:' + (isDark ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.3)') + ';z-index:10002;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;backdrop-filter:blur(4px);';
     var box = document.createElement('div');
-    box.style.cssText = 'background:#111;border:1px solid rgba(255,255,255,0.1);border-radius:14px;width:90%;max-width:480px;box-shadow:0 24px 64px rgba(0,0,0,0.6);overflow:hidden;';
+    box.style.cssText = 'background:' + (isDark ? '#111' : '#ffffff') + ';border:1px solid ' + (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)') + ';border-radius:14px;width:90%;max-width:480px;box-shadow:0 24px 64px ' + (isDark ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.15)') + ';overflow:hidden;';
     var input = document.createElement('input');
     input.type = 'text';
-    input.placeholder = 'Type to search…';
-    input.style.cssText = 'width:100%;padding:14px 18px;background:transparent;border:none;border-bottom:1px solid rgba(255,255,255,0.06);color:#e5e5e5;font-size:0.92rem;font-family:var(--font-ui);outline:none;';
+    input.placeholder = 'Type to search\u2026';
+    input.style.cssText = 'width:100%;padding:14px 18px;background:transparent;border:none;border-bottom:1px solid ' + (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)') + ';color:' + (isDark ? '#e5e5e5' : '#0a0a0a') + ';font-size:0.92rem;font-family:var(--font-sans);outline:none;';
     var list = document.createElement('div');
     list.style.cssText = 'max-height:300px;overflow-y:auto;padding:6px;';
+    var textColor = isDark ? '#e5e5e5' : '#0a0a0a';
+    var hoverBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
     function render(filter) {
         list.innerHTML = '';
         var filtered = items.filter(function(i) { return !filter || i.label.toLowerCase().includes(filter.toLowerCase()); });
         filtered.forEach(function(item, idx) {
             var a = document.createElement('a');
             a.href = item.url;
-            a.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;text-decoration:none;color:#e5e5e5;font-size:0.84rem;transition:background 0.15s;';
+            a.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;text-decoration:none;color:' + textColor + ';font-size:0.84rem;transition:background 0.15s;';
             a.innerHTML = '<i class="icon-' + item.icon + '" style="font-size:16px;color:var(--accent);opacity:0.6;"></i>' + item.label;
-            a.onmouseover = function() { this.style.background = 'rgba(255,255,255,0.06)'; };
+            a.onmouseover = function() { this.style.background = hoverBg; };
             a.onmouseout = function() { this.style.background = 'transparent'; };
             list.appendChild(a);
         });

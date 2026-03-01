@@ -90,9 +90,12 @@
                     {% endif %}
                 {% endfor %}
                 <td style="white-space:nowrap;">
-                    <a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/{{ row.pk }}" class="btn btn-sm btn-ghost" title="Edit (e)">
+                    <a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/{{ row.pk }}" class="btn btn-sm btn-ghost" title="View / Edit">
                         <i class="icon-edit-3" style="font-size:13px;"></i>
                     </a>
+                    <button type="button" class="btn btn-sm btn-ghost" title="Duplicate" onclick="duplicateRecord('{{ row.pk }}')">
+                        <i class="icon-copy" style="font-size:13px;"></i>
+                    </button>
                     <form method="POST" action="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/{{ row.pk }}/delete" style="display:inline;" onsubmit="return confirm('Delete record #{{ row.pk }}? This cannot be undone.');">
                         <button type="submit" class="btn btn-sm btn-ghost" title="Delete" style="color:var(--danger);">
                             <i class="icon-trash-2" style="font-size:13px;"></i>
@@ -227,6 +230,22 @@ document.addEventListener('keydown', function(e) {
     if (['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) return;
     if (e.key === 'n') window.location.href = '{{ url_prefix|default("/admin") }}/{{ model_name|lower }}/add';
 });
+
+// ── Inline duplicate via bulk action ────────────────────────────────
+function duplicateRecord(pk) {
+    if (!confirm('Duplicate record #' + pk + '?')) return;
+    var form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '{{ url_prefix|default("/admin") }}/{{ model_name|lower }}/action';
+    var actionInput = document.createElement('input');
+    actionInput.type = 'hidden'; actionInput.name = 'action'; actionInput.value = 'duplicate_selected';
+    form.appendChild(actionInput);
+    var selectedInput = document.createElement('input');
+    selectedInput.type = 'hidden'; selectedInput.name = 'selected'; selectedInput.value = pk;
+    form.appendChild(selectedInput);
+    document.body.appendChild(form);
+    form.submit();
+}
 
 // ── Dropdown CSS injection ──────────────────────────────────────────
 (function() {

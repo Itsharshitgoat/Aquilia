@@ -369,12 +369,25 @@ class AdminSite:
                     import json as _json
                     artifact["content"] = _json.dumps(decoded, indent=2, default=str)
                     artifact["content_type"] = "json"
+                    artifact["content_highlighted"] = self._highlight_json(artifact["content"])
                 except Exception:
                     # Fallback: try UTF-8 text
                     try:
                         text = raw.decode("utf-8")
                         artifact["content"] = text
                         artifact["content_type"] = "text"
+                        # Try to detect if it's JSON
+                        text_stripped = text.strip()
+                        if text_stripped and text_stripped[0] in ('{', '['):
+                            try:
+                                import json as _json2
+                                _json2.loads(text_stripped)
+                                artifact["content_type"] = "json"
+                                artifact["content_highlighted"] = self._highlight_json(text)
+                            except (ValueError, TypeError):
+                                artifact["content_highlighted"] = self._highlight_crous(text)
+                        else:
+                            artifact["content_highlighted"] = self._highlight_crous(text)
                     except UnicodeDecodeError:
                         # Show hex dump for binary
                         hex_lines = []
@@ -813,6 +826,137 @@ class AdminSite:
 
         return '\n'.join(result_lines)
 
+    @staticmethod
+    def _highlight_json(source: str) -> str:
+        """Apply syntax highlighting to JSON source."""
+        import re
+        import html as html_mod
+
+        lines = source.split('\n')
+        result_lines = []
+
+        for i, line in enumerate(lines, 1):
+            escaped = html_mod.escape(line)
+
+            # String values (after colon)
+            escaped = re.sub(
+                r'(&quot;)(.*?)(&quot;)\s*(:)',
+                r'<span class="prop">\1\2\3</span>\4',
+                escaped,
+            )
+
+            # String values (not keys)
+            escaped = re.sub(
+                r':\s*(&quot;)(.*?)(&quot;)',
+                r': <span class="str">\1\2\3</span>',
+                escaped,
+            )
+
+            # Standalone strings (in arrays)
+            escaped = re.sub(
+                r'(?<=[\[,\s])(&quot;)(.*?)(&quot;)(?=[,\]\s])',
+                r'<span class="str">\1\2\3</span>',
+                escaped,
+            )
+
+            # Numbers
+            escaped = re.sub(
+                r'(?<=:\s)(-?\d+\.?\d*(?:[eE][+-]?\d+)?)(?=[,\s\}\]])',
+                r'<span class="num">\1</span>',
+                escaped,
+            )
+
+            # Booleans and null
+            escaped = re.sub(
+                r'\b(true|false|null)\b',
+                r'<span class="kw">\1</span>',
+                escaped,
+            )
+
+            # Braces and brackets
+            escaped = re.sub(
+                r'([\{\}\[\]])',
+                r'<span class="op">\1</span>',
+                escaped,
+            )
+
+            line_num = f'<span class="code-line-num">{i}</span>'
+            result_lines.append(f'{line_num}{escaped}')
+
+        return '\n'.join(result_lines)
+
+    @staticmethod
+    def _highlight_crous(source: str) -> str:
+        """Apply syntax highlighting to Crous format data."""
+        import re
+        import html as html_mod
+
+        lines = source.split('\n')
+        result_lines = []
+
+        for i, line in enumerate(lines, 1):
+            escaped = html_mod.escape(line)
+
+            # Comments (# or //)
+            escaped = re.sub(
+                r'(#.*?)$',
+                r'<span class="cmt">\1</span>',
+                escaped,
+            )
+            escaped = re.sub(
+                r'(//.*?)$',
+                r'<span class="cmt">\1</span>',
+                escaped,
+            )
+
+            # Section headers [SectionName]
+            escaped = re.sub(
+                r'^(\s*)(\[[\w\.\-]+\])',
+                r'\1<span class="cls">\2</span>',
+                escaped,
+            )
+
+            # Keys (before = or :)
+            escaped = re.sub(
+                r'^(\s*)([\w\.\-]+)\s*(=|:)',
+                r'\1<span class="kw">\2</span> \3',
+                escaped,
+            )
+
+            # Strings
+            escaped = re.sub(
+                r'(&quot;[^&]*?&quot;|&#x27;[^&]*?&#x27;)',
+                r'<span class="str">\1</span>',
+                escaped,
+            )
+
+            # Numbers
+            escaped = re.sub(
+                r'\b(\d+\.?\d*)\b',
+                r'<span class="num">\1</span>',
+                escaped,
+            )
+
+            # Booleans
+            escaped = re.sub(
+                r'\b(true|false|yes|no|null|none)\b',
+                r'<span class="kw">\1</span>',
+                escaped,
+                flags=re.IGNORECASE,
+            )
+
+            # Hex values (common in Crous binary dumps)
+            escaped = re.sub(
+                r'\b(0x[0-9a-fA-F]+)\b',
+                r'<span class="num">\1</span>',
+                escaped,
+            )
+
+            line_num = f'<span class="code-line-num">{i}</span>'
+            result_lines.append(f'{line_num}{escaped}')
+
+        return '\n'.join(result_lines)
+
     # ── CRUD operations ──────────────────────────────────────────────
 
     async def list_records(
@@ -1000,7 +1144,7 @@ class AdminSite:
         except Exception as e:
             raise AdminValidationFault(str(e))
 
-        # Audit log
+        # Audit log (in-memory + ORM-backed)
         if identity:
             self.audit_log.log(
                 user_id=identity.id,
@@ -1011,6 +1155,21 @@ class AdminSite:
                 record_pk=str(record.pk),
                 changes=clean_data,
             )
+            # Persist to AdminLogEntry (database-backed audit trail)
+            try:
+                from .models import AdminLogEntry, ContentType, _HAS_ORM
+                if _HAS_ORM:
+                    ct = await ContentType.get_for_model(model_cls)
+                    await AdminLogEntry.log_action(
+                        user_id=int(identity.id) if identity.id.isdigit() else 1,
+                        content_type_id=ct.pk if ct else None,
+                        object_id=str(record.pk),
+                        object_repr=str(record),
+                        action_flag=AdminLogEntry.ADDITION,
+                        change_message=str(clean_data),
+                    )
+            except Exception:
+                pass
 
         return record
 
@@ -1054,7 +1213,7 @@ class AdminSite:
             except Exception as e:
                 raise AdminValidationFault(str(e))
 
-        # Audit log
+        # Audit log (in-memory + ORM-backed)
         if identity and changes:
             self.audit_log.log(
                 user_id=identity.id,
@@ -1065,6 +1224,25 @@ class AdminSite:
                 record_pk=str(pk),
                 changes=changes,
             )
+            # Persist to AdminLogEntry (database-backed audit trail)
+            try:
+                from .models import AdminLogEntry, ContentType, _HAS_ORM
+                if _HAS_ORM:
+                    ct = await ContentType.get_for_model(model_cls)
+                    import json as _json
+                    change_msg = _json.dumps([
+                        {"changed": {"fields": list(changes.keys())}}
+                    ], default=str)
+                    await AdminLogEntry.log_action(
+                        user_id=int(identity.id) if identity.id.isdigit() else 1,
+                        content_type_id=ct.pk if ct else None,
+                        object_id=str(pk),
+                        object_repr=str(record),
+                        action_flag=AdminLogEntry.CHANGE,
+                        change_message=change_msg,
+                    )
+            except Exception:
+                pass
 
         return record
 
@@ -1091,7 +1269,7 @@ class AdminSite:
         except Exception as e:
             raise AdminValidationFault(str(e))
 
-        # Audit log
+        # Audit log (in-memory + ORM-backed)
         if identity:
             self.audit_log.log(
                 user_id=identity.id,
@@ -1101,6 +1279,20 @@ class AdminSite:
                 model_name=model_name,
                 record_pk=str(pk),
             )
+            # Persist to AdminLogEntry (database-backed audit trail)
+            try:
+                from .models import AdminLogEntry, ContentType, _HAS_ORM
+                if _HAS_ORM:
+                    ct = await ContentType.get_for_model(model_cls)
+                    await AdminLogEntry.log_action(
+                        user_id=int(identity.id) if identity.id.isdigit() else 1,
+                        content_type_id=ct.pk if ct else None,
+                        object_id=str(pk),
+                        object_repr=f"Deleted {model_name} #{pk}",
+                        action_flag=AdminLogEntry.DELETION,
+                    )
+            except Exception:
+                pass
 
         return True
 

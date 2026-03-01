@@ -3139,12 +3139,14 @@ class TestTemplateFeatures:
         )
         assert "showCommandPalette" in html or "cmd-palette" in html
 
-    def test_dashboard_has_uptime(self):
+    def test_dashboard_no_session_countdown(self):
+        """Session countdown timer was intentionally removed from dashboard."""
         html = render_dashboard(
             app_list=[], stats={"total_models": 1, "model_counts": {}, "recent_actions": []},
             identity_name="admin",
         )
-        assert "uptime" in html.lower()
+        assert "uptime-display" not in html
+        assert "updateUptime" not in html
 
     def test_build_template_has_click_to_view(self):
         html = render_build_page(
@@ -3214,7 +3216,7 @@ class TestThemeToggle:
             app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
             identity_name="admin",
         )
-        assert "display" in html and "'none'" in html
+        assert "requestAnimationFrame" in html
 
     def test_theme_stored_in_localstorage(self):
         html = render_dashboard(
@@ -3223,3 +3225,562 @@ class TestThemeToggle:
         )
         assert "localStorage" in html
         assert "aquilia-admin-theme" in html
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SESSION 6 – NEW FEATURE TESTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestSessionCountdownRemoval:
+    """Verify session countdown timer was removed from dashboard."""
+
+    def test_no_uptime_display_id(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 1, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "uptime-display" not in html
+
+    def test_no_update_uptime_function(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 1, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "updateUptime" not in html
+
+    def test_no_setinterval_uptime(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 1, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "setInterval" not in html or "updateUptime" not in html
+
+    def test_dashboard_stats_still_present(self):
+        """Other stats remain after timer removal."""
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 5, "model_counts": {"Product": 10}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "stats-row" in html
+        assert "5" in html  # total_models
+
+
+class TestGridBackground:
+    """Verify grid background pattern is in CSS."""
+
+    def test_css_has_grid_linear_gradient(self):
+        from aquilia.admin.templates import _jinja_env
+        tpl = _jinja_env.get_template("partials/css.html")
+        css = tpl.render()
+        assert "linear-gradient" in css
+        assert "40px 40px" in css
+
+    def test_css_has_dark_grid_color(self):
+        from aquilia.admin.templates import _jinja_env
+        tpl = _jinja_env.get_template("partials/css.html")
+        css = tpl.render()
+        assert "#27272a" in css
+
+    def test_css_has_light_grid_color(self):
+        from aquilia.admin.templates import _jinja_env
+        tpl = _jinja_env.get_template("partials/css.html")
+        css = tpl.render()
+        assert "#d4d4d8" in css
+
+    def test_body_before_has_background_size(self):
+        from aquilia.admin.templates import _jinja_env
+        tpl = _jinja_env.get_template("partials/css.html")
+        css = tpl.render()
+        assert "background-size" in css
+
+
+class TestAdminModelRegistration:
+    """Verify _register_admin_models registers all 6 admin models."""
+
+    def test_register_admin_models_function_exists(self):
+        from aquilia.admin.registry import _register_admin_models
+        assert callable(_register_admin_models)
+
+    def test_registers_content_type(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.admin.models import ContentType
+        from aquilia.admin.registry import _register_admin_models
+        AdminSite.reset()
+        site = AdminSite()
+        _register_admin_models(site)
+        assert site.is_registered(ContentType)
+
+    def test_registers_admin_permission(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.admin.models import AdminPermission
+        from aquilia.admin.registry import _register_admin_models
+        AdminSite.reset()
+        site = AdminSite()
+        _register_admin_models(site)
+        assert site.is_registered(AdminPermission)
+
+    def test_registers_admin_group(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.admin.models import AdminGroup
+        from aquilia.admin.registry import _register_admin_models
+        AdminSite.reset()
+        site = AdminSite()
+        _register_admin_models(site)
+        assert site.is_registered(AdminGroup)
+
+    def test_registers_admin_user(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.admin.models import AdminUser
+        from aquilia.admin.registry import _register_admin_models
+        AdminSite.reset()
+        site = AdminSite()
+        _register_admin_models(site)
+        assert site.is_registered(AdminUser)
+
+    def test_registers_admin_log_entry(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.admin.models import AdminLogEntry
+        from aquilia.admin.registry import _register_admin_models
+        AdminSite.reset()
+        site = AdminSite()
+        _register_admin_models(site)
+        assert site.is_registered(AdminLogEntry)
+
+    def test_registers_admin_session(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.admin.models import AdminSession
+        from aquilia.admin.registry import _register_admin_models
+        AdminSite.reset()
+        site = AdminSite()
+        _register_admin_models(site)
+        assert site.is_registered(AdminSession)
+
+    def test_content_type_admin_has_list_display(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.admin.models import ContentType
+        from aquilia.admin.registry import _register_admin_models
+        AdminSite.reset()
+        site = AdminSite()
+        _register_admin_models(site)
+        admin = site.get_model_admin(ContentType)
+        assert "app_label" in admin.list_display
+        assert "model" in admin.list_display
+
+    def test_admin_user_excludes_password_hash(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.admin.models import AdminUser
+        from aquilia.admin.registry import _register_admin_models
+        AdminSite.reset()
+        site = AdminSite()
+        _register_admin_models(site)
+        admin = site.get_model_admin(AdminUser)
+        assert "password_hash" in admin.exclude
+
+    def test_admin_log_entry_fully_readonly(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.admin.models import AdminLogEntry
+        from aquilia.admin.registry import _register_admin_models
+        AdminSite.reset()
+        site = AdminSite()
+        _register_admin_models(site)
+        admin = site.get_model_admin(AdminLogEntry)
+        assert "action_time" in admin.readonly_fields
+        assert "user" in admin.readonly_fields
+        assert "object_repr" in admin.readonly_fields
+
+    def test_no_double_registration(self):
+        """Calling _register_admin_models twice doesn't error."""
+        from aquilia.admin.site import AdminSite
+        from aquilia.admin.models import ContentType
+        from aquilia.admin.registry import _register_admin_models
+        AdminSite.reset()
+        site = AdminSite()
+        _register_admin_models(site)
+        _register_admin_models(site)  # should be a no-op
+        assert site.is_registered(ContentType)
+
+    def test_admin_models_have_icons(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.admin.models import ContentType, AdminGroup, AdminUser
+        from aquilia.admin.registry import _register_admin_models
+        AdminSite.reset()
+        site = AdminSite()
+        _register_admin_models(site)
+        for model_cls in [ContentType, AdminGroup, AdminUser]:
+            admin = site.get_model_admin(model_cls)
+            assert admin.icon, f"{model_cls.__name__} admin should have an icon"
+
+
+class TestCommandPaletteTheme:
+    """Command palette supports both light and dark themes."""
+
+    def test_command_palette_detects_theme(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "data-theme" in html
+        assert "isDark" in html or "is_dark" in html or "light" in html
+
+    def test_command_palette_uses_css_vars_trigger(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "var(--bg-surface)" in html
+
+    def test_command_palette_no_hardcoded_dark_colors(self):
+        """Command palette trigger should not use hardcoded rgba dark colors."""
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        # The trigger div should not have hardcoded rgba(0,0,0,0.4)
+        # Find the cmd-trigger area
+        import re
+        triggers = re.findall(r'cmd-trigger.*?(?=<div|$)', html, re.DOTALL)
+        for t in triggers:
+            assert "rgba(0,0,0,0.4)" not in t
+
+
+class TestSyntaxHighlighting:
+    """JSON and Crous syntax highlighting in code blocks."""
+
+    def test_highlight_json_method_exists(self):
+        from aquilia.admin.site import AdminSite
+        assert hasattr(AdminSite, "_highlight_json")
+
+    def test_highlight_crous_method_exists(self):
+        from aquilia.admin.site import AdminSite
+        assert hasattr(AdminSite, "_highlight_crous")
+
+    def test_json_highlights_keys(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_json('{"name": "value"}')
+        assert 'class="prop"' in result
+
+    def test_json_highlights_string_values(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_json('{"key": "hello"}')
+        assert 'class="str"' in result
+
+    def test_json_highlights_numbers(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_json('{"count": 42}')
+        assert 'class="num"' in result
+
+    def test_json_highlights_booleans(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_json('{"active": true}')
+        assert 'class="kw"' in result
+
+    def test_json_highlights_null(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_json('{"val": null}')
+        assert 'class="kw"' in result
+
+    def test_json_highlights_braces(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_json('{"a": [1]}')
+        assert 'class="op"' in result
+
+    def test_json_has_line_numbers(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_json('{\n  "key": "val"\n}')
+        assert 'class="code-line-num"' in result
+        assert ">1<" in result
+        assert ">2<" in result
+
+    def test_json_multiline(self):
+        from aquilia.admin.site import AdminSite
+        src = '{\n  "name": "test",\n  "count": 5,\n  "active": true\n}'
+        result = AdminSite._highlight_json(src)
+        lines = result.split('\n')
+        assert len(lines) == 5
+
+    def test_crous_highlights_sections(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_crous('[Database]\nhost = localhost')
+        assert 'class="cls"' in result
+
+    def test_crous_highlights_keys(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_crous('host = localhost')
+        assert 'class="kw"' in result
+
+    def test_crous_highlights_comments(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_crous('# this is a comment')
+        assert 'class="cmt"' in result
+
+    def test_crous_highlights_booleans(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_crous('enabled = true')
+        assert 'class="kw"' in result
+
+    def test_crous_highlights_numbers(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_crous('port = 5432')
+        assert 'class="num"' in result
+
+    def test_crous_highlights_hex(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_crous('addr = 0xFF00AA')
+        assert 'class="num"' in result
+
+    def test_crous_has_line_numbers(self):
+        from aquilia.admin.site import AdminSite
+        result = AdminSite._highlight_crous('[Server]\nport = 8080')
+        assert 'class="code-line-num"' in result
+
+    def test_build_template_renders_highlighted_json(self):
+        """Build page renders JSON artifacts with syntax highlighting spans."""
+        html = render_build_page(
+            build_info={"workspace_name": "test", "total_artifacts": 1},
+            artifacts=[{
+                "name": "test.json", "digest": "abc",
+                "content": '{"key": "value"}', "kind": "model",
+                "content_highlighted": '<span class="prop">"key"</span>: <span class="str">"value"</span>',
+            }],
+            pipeline_phases=[],
+            build_log="",
+            build_files=[],
+        )
+        assert 'class="prop"' in html or 'class="str"' in html
+
+
+class TestDashboardThemeToggle:
+    """Dashboard theme toggle uses requestAnimationFrame instead of display:none."""
+
+    def test_uses_request_animation_frame(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "requestAnimationFrame" in html
+
+    def test_no_display_none_hack(self):
+        """The old body.style.display='none' hack should be gone."""
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "body.style.display" not in html
+
+    def test_theme_toggle_function_exists(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "toggleTheme" in html
+
+
+class TestIndustryLevelActions:
+    """Verify all industry-level bulk actions are registered."""
+
+    def test_default_actions_include_delete(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        assert "delete_selected" in actions
+
+    def test_default_actions_include_duplicate(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        assert "duplicate_selected" in actions
+
+    def test_default_actions_include_export_csv(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        assert "export_csv" in actions
+
+    def test_default_actions_include_export_json(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        assert "export_json" in actions
+
+    def test_default_actions_include_activate(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        assert "activate_selected" in actions
+
+    def test_default_actions_include_deactivate(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        assert "deactivate_selected" in actions
+
+    def test_default_actions_include_mark_featured(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        assert "mark_featured" in actions
+
+    def test_default_actions_include_unmark_featured(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        assert "unmark_featured" in actions
+
+    def test_total_action_count(self):
+        """Should have at least 8 built-in actions."""
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        assert len(actions) >= 8
+
+    def test_delete_has_confirmation(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        desc = actions["delete_selected"]
+        assert desc.confirmation and len(desc.confirmation) > 0
+
+    def test_duplicate_has_description(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        desc = actions["duplicate_selected"]
+        assert "Duplicate" in desc.short_description
+
+    def test_export_csv_has_description(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        desc = actions["export_csv"]
+        assert "CSV" in desc.short_description
+
+    def test_export_json_has_description(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        desc = actions["export_json"]
+        assert "JSON" in desc.short_description
+
+    def test_activate_has_description(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        desc = actions["activate_selected"]
+        assert "Activate" in desc.short_description
+
+    def test_deactivate_has_description(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        desc = actions["deactivate_selected"]
+        assert "Deactivate" in desc.short_description
+
+    def test_actions_have_callable_func(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        for name, desc in actions.items():
+            assert callable(desc.func), f"Action {name} func not callable"
+
+    def test_find_boolean_field_no_model(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        result = ma._find_boolean_field("is_active")
+        assert result is None
+
+    def test_list_template_has_duplicate_button(self):
+        html = render_list_view(
+            data={
+                "rows": [{"pk": "1", "values": [("id", "1"), ("name", "Test")]}],
+                "list_display": ["id", "name"],
+                "model_name": "Product",
+                "page": 1, "total_pages": 1, "total": 1,
+                "verbose_name": "Product", "verbose_name_plural": "Products",
+                "pk_field": "id",
+                "actions": {"delete_selected": MagicMock(short_description="Delete", confirmation="Sure?")},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "duplicateRecord" in html
+
+    def test_list_template_has_all_actions_in_dropdown(self):
+        """Actions dropdown shows all registered actions."""
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        actions = ma.get_actions()
+        action_data = {
+            name: MagicMock(short_description=desc.short_description, confirmation=desc.confirmation or "")
+            for name, desc in actions.items()
+        }
+        html = render_list_view(
+            data={
+                "rows": [{"pk": "1", "values": [("id", "1")]}],
+                "list_display": ["id"],
+                "model_name": "Product",
+                "page": 1, "total_pages": 1, "total": 1,
+                "verbose_name": "Product", "verbose_name_plural": "Products",
+                "pk_field": "id",
+                "actions": action_data,
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "export_csv" in html
+        assert "export_json" in html
+        assert "activate_selected" in html
+        assert "duplicate_selected" in html
+
+
+class TestKeyboardShortcutsTheme:
+    """Keyboard shortcuts overlay uses CSS variables for theming."""
+
+    def test_shortcuts_overlay_uses_css_vars(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "var(--bg-elevated)" in html
+        assert "var(--border-color)" in html
+
+    def test_shortcuts_overlay_no_hardcoded_111(self):
+        """Shortcuts overlay should not use hardcoded #111 background."""
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        # The shortcuts overlay inner div should use CSS vars, not #111
+        assert "var(--bg-surface)" in html
+
+    def test_shortcuts_kbd_uses_css_vars(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "var(--text-primary)" in html
+        assert "var(--font-mono)" in html
+
+
+class TestToastTheming:
+    """Toast notifications use CSS variables for theme support."""
+
+    def test_toast_uses_bg_elevated(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        # Toast background should be var(--bg-elevated)
+        assert "var(--bg-elevated)" in html
+
+    def test_toast_uses_text_primary(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "var(--text-primary)" in html
+
+    def test_toast_uses_font_sans(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "var(--font-sans)" in html

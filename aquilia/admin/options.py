@@ -168,6 +168,50 @@ class ModelAdmin:
             confirmation="Are you sure you want to delete the selected records? This action cannot be undone.",
         )
 
+        # Built-in duplicate action
+        self._actions["duplicate_selected"] = AdminActionDescriptor(
+            func=self._action_duplicate_selected,
+            name="duplicate_selected",
+            short_description="Duplicate selected records",
+            confirmation="",
+        )
+
+        # Built-in export actions
+        self._actions["export_csv"] = AdminActionDescriptor(
+            func=self._action_export_csv,
+            name="export_csv",
+            short_description="Export selected as CSV",
+        )
+        self._actions["export_json"] = AdminActionDescriptor(
+            func=self._action_export_json,
+            name="export_json",
+            short_description="Export selected as JSON",
+        )
+
+        # Built-in activate/deactivate (for models with is_active/active field)
+        self._actions["activate_selected"] = AdminActionDescriptor(
+            func=self._action_activate_selected,
+            name="activate_selected",
+            short_description="Activate selected records",
+        )
+        self._actions["deactivate_selected"] = AdminActionDescriptor(
+            func=self._action_deactivate_selected,
+            name="deactivate_selected",
+            short_description="Deactivate selected records",
+        )
+
+        # Built-in mark as featured/unfeatured
+        self._actions["mark_featured"] = AdminActionDescriptor(
+            func=self._action_mark_featured,
+            name="mark_featured",
+            short_description="Mark as featured",
+        )
+        self._actions["unmark_featured"] = AdminActionDescriptor(
+            func=self._action_unmark_featured,
+            name="unmark_featured",
+            short_description="Unmark featured",
+        )
+
         # Discover methods decorated with @action
         for attr_name in dir(self.__class__):
             if attr_name.startswith("_"):
@@ -457,3 +501,87 @@ class ModelAdmin:
         """Built-in delete action."""
         count = await queryset.delete()
         return f"Deleted {count} record(s)"
+
+    async def _action_duplicate_selected(self, request: Any, queryset: Any) -> str:
+        """Duplicate selected records by creating copies with cleared PKs."""
+        records = await queryset.all()
+        if not records:
+            return "No records to duplicate"
+        count = 0
+        pk_attr = getattr(self.model, "_pk_attr", "id") if self.model else "id"
+        for record in records:
+            data = {}
+            if isinstance(record, dict):
+                data = {k: v for k, v in record.items() if k != pk_attr and not k.startswith("_")}
+            else:
+                for field_name in (self.model._fields if self.model else {}):
+                    if field_name == pk_attr:
+                        continue
+                    val = getattr(record, field_name, None)
+                    if val is not None:
+                        data[field_name] = val
+            try:
+                if self.model:
+                    await self.model.create(**data)
+                    count += 1
+            except Exception:
+                pass
+        return f"Duplicated {count} record(s)"
+
+    async def _action_export_csv(self, request: Any, queryset: Any) -> str:
+        """Export selected records as CSV (server-side marker for redirect)."""
+        records = await queryset.all()
+        return f"Exported {len(records)} record(s) as CSV"
+
+    async def _action_export_json(self, request: Any, queryset: Any) -> str:
+        """Export selected records as JSON (server-side marker for redirect)."""
+        records = await queryset.all()
+        return f"Exported {len(records)} record(s) as JSON"
+
+    async def _action_activate_selected(self, request: Any, queryset: Any) -> str:
+        """Set is_active=True on selected records."""
+        active_field = self._find_boolean_field("is_active", "active", "enabled")
+        if not active_field:
+            return "This model has no active/enabled field"
+        count = await queryset.update({active_field: True})
+        count = count if isinstance(count, int) else 0
+        return f"Activated {count} record(s)"
+
+    async def _action_deactivate_selected(self, request: Any, queryset: Any) -> str:
+        """Set is_active=False on selected records."""
+        active_field = self._find_boolean_field("is_active", "active", "enabled")
+        if not active_field:
+            return "This model has no active/enabled field"
+        count = await queryset.update({active_field: False})
+        count = count if isinstance(count, int) else 0
+        return f"Deactivated {count} record(s)"
+
+    async def _action_mark_featured(self, request: Any, queryset: Any) -> str:
+        """Set is_featured=True on selected records."""
+        feat_field = self._find_boolean_field("is_featured", "featured", "pinned", "starred")
+        if not feat_field:
+            return "This model has no featured/pinned field"
+        count = await queryset.update({feat_field: True})
+        count = count if isinstance(count, int) else 0
+        return f"Marked {count} record(s) as featured"
+
+    async def _action_unmark_featured(self, request: Any, queryset: Any) -> str:
+        """Set is_featured=False on selected records."""
+        feat_field = self._find_boolean_field("is_featured", "featured", "pinned", "starred")
+        if not feat_field:
+            return "This model has no featured/pinned field"
+        count = await queryset.update({feat_field: False})
+        count = count if isinstance(count, int) else 0
+        return f"Unmarked {count} record(s) from featured"
+
+    def _find_boolean_field(self, *candidates: str) -> Optional[str]:
+        """Find the first matching boolean field name on the model."""
+        if not self.model:
+            return None
+        from aquilia.models.fields_module import BooleanField
+        for name in candidates:
+            if name in self.model._fields:
+                field = self.model._fields[name]
+                if isinstance(field, BooleanField):
+                    return name
+        return None

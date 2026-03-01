@@ -76,10 +76,13 @@
         const next = current === 'dark' ? 'light' : 'dark';
         html.setAttribute('data-theme', next);
         localStorage.setItem('aquilia-admin-theme', next);
-        // Force repaint for CSS variable changes (fixes bg not updating)
-        document.body.style.display = 'none';
-        document.body.offsetHeight; // trigger reflow
-        document.body.style.display = '';
+        // Force repaint for CSS variable changes
+        document.body.classList.add('theme-transitioning');
+        requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+                document.body.classList.remove('theme-transitioning');
+            });
+        });
     }
     (function() {
         // Show mobile menu toggle on small screens
@@ -114,7 +117,7 @@
             var icons = {success:'check-circle',error:'alert-circle',warning:'alert-triangle',info:'info'};
             var colors = {success:'#22c55e',error:'#ef4444',warning:'#f59e0b',info:'#3b82f6'};
             var toast = document.createElement('div');
-            toast.style.cssText = 'pointer-events:auto;display:flex;align-items:center;gap:10px;padding:12px 18px;background:#111;border:1px solid '+colors[type]+';border-radius:10px;color:#e5e5e5;font-size:0.82rem;font-family:var(--font-ui);box-shadow:0 8px 32px rgba(0,0,0,0.5);opacity:0;transform:translateX(40px);transition:opacity 0.3s,transform 0.3s;max-width:380px;';
+            toast.style.cssText = 'pointer-events:auto;display:flex;align-items:center;gap:10px;padding:12px 18px;background:var(--bg-elevated);border:1px solid '+colors[type]+';border-radius:10px;color:var(--text-primary);font-size:0.82rem;font-family:var(--font-sans);box-shadow:0 8px 32px rgba(0,0,0,0.3);opacity:0;transform:translateX(40px);transition:opacity 0.3s,transform 0.3s;max-width:380px;';
             toast.innerHTML = '<i class="icon-'+icons[type]+'" style="font-size:16px;color:'+colors[type]+';flex-shrink:0;"></i><span>'+msg+'</span><button onclick="this.parentElement.remove()" style="background:none;border:none;color:#888;cursor:pointer;padding:0 0 0 8px;font-size:16px;">&times;</button>';
             container.appendChild(toast);
             requestAnimationFrame(function() {
@@ -143,13 +146,13 @@
                 var overlay = document.createElement('div');
                 overlay.id = 'shortcut-overlay';
                 overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10001;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
-                overlay.innerHTML = '<div style="background:#111;border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:28px 36px;max-width:420px;width:90%;box-shadow:0 24px 64px rgba(0,0,0,0.6);">' +
-                    '<h3 style="margin:0 0 18px;color:#e5e5e5;font-size:1rem;font-weight:600;">Keyboard Shortcuts</h3>' +
-                    '<div style="display:grid;grid-template-columns:auto 1fr;gap:8px 18px;font-size:0.82rem;color:#a3a3a3;">' +
-                    '<kbd style="background:#222;padding:2px 8px;border-radius:4px;font-size:0.75rem;color:#e5e5e5;font-family:var(--font-mono);border:1px solid #333;">⌘K</kbd><span>Focus search</span>' +
-                    '<kbd style="background:#222;padding:2px 8px;border-radius:4px;font-size:0.75rem;color:#e5e5e5;font-family:var(--font-mono);border:1px solid #333;">N</kbd><span>Add new record</span>' +
-                    '<kbd style="background:#222;padding:2px 8px;border-radius:4px;font-size:0.75rem;color:#e5e5e5;font-family:var(--font-mono);border:1px solid #333;">Shift+?</kbd><span>Show this help</span>' +
-                    '<kbd style="background:#222;padding:2px 8px;border-radius:4px;font-size:0.75rem;color:#e5e5e5;font-family:var(--font-mono);border:1px solid #333;">Esc</kbd><span>Close dialogs</span>' +
+                overlay.innerHTML = '<div style="background:var(--bg-elevated);border:1px solid var(--border-color);border-radius:14px;padding:28px 36px;max-width:420px;width:90%;box-shadow:0 24px 64px rgba(0,0,0,0.4);">' +
+                    '<h3 style="margin:0 0 18px;color:var(--text-primary);font-size:1rem;font-weight:600;">Keyboard Shortcuts</h3>' +
+                    '<div style="display:grid;grid-template-columns:auto 1fr;gap:8px 18px;font-size:0.82rem;color:var(--text-secondary);">' +
+                    '<kbd style="background:var(--bg-surface);padding:2px 8px;border-radius:4px;font-size:0.75rem;color:var(--text-primary);font-family:var(--font-mono);border:1px solid var(--border-color);">⌘K</kbd><span>Focus search</span>' +
+                    '<kbd style="background:var(--bg-surface);padding:2px 8px;border-radius:4px;font-size:0.75rem;color:var(--text-primary);font-family:var(--font-mono);border:1px solid var(--border-color);">N</kbd><span>Add new record</span>' +
+                    '<kbd style="background:var(--bg-surface);padding:2px 8px;border-radius:4px;font-size:0.75rem;color:var(--text-primary);font-family:var(--font-mono);border:1px solid var(--border-color);">Shift+?</kbd><span>Show this help</span>' +
+                    '<kbd style="background:var(--bg-surface);padding:2px 8px;border-radius:4px;font-size:0.75rem;color:var(--text-primary);font-family:var(--font-mono);border:1px solid var(--border-color);">Esc</kbd><span>Close dialogs</span>' +
                     '</div>' +
                     '<div style="margin-top:18px;text-align:right;"><button onclick="this.closest(\'#shortcut-overlay\').remove()" style="background:var(--accent);color:#000;border:none;padding:6px 18px;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:500;">Close</button></div>' +
                     '</div>';

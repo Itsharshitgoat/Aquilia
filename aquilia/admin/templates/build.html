@@ -99,7 +99,7 @@
                 </span>
             </div>
             <div class="code-block-body" style="max-height:500px;overflow-y:auto;">
-                <pre>{{ art.content }}</pre>
+                <pre>{% if art.content_highlighted %}{{ art.content_highlighted|safe }}{% else %}{{ art.content }}{% endif %}</pre>
             </div>
         </div>
         {% endif %}
