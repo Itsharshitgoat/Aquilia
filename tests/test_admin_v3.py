@@ -1058,17 +1058,20 @@ class TestMetaConfiguration:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestAutoAdminSessions:
-    """Tests for _ensure_admin_sessions auto-enabling when admin is used."""
+class TestValidateAdminPrerequisites:
+    """Tests for _validate_admin_prerequisites warning-only validation."""
 
     def _make_server(self, *, session_engine=None, middleware_names=None):
         """Create a minimal mock server with controllable session state."""
-        from unittest.mock import MagicMock, PropertyMock
+        from unittest.mock import MagicMock
         import logging
 
         server = MagicMock()
         server._session_engine = session_engine
-        server.logger = logging.getLogger("test_auto_sessions")
+
+        # Use a MagicMock for the logger so we can assert on .warning()
+        mock_logger = MagicMock(spec=logging.Logger)
+        server.logger = mock_logger
 
         # Build a mock middleware stack with named entries
         stack = MagicMock()
@@ -1080,84 +1083,79 @@ class TestAutoAdminSessions:
         stack.middlewares = descs
         server.middleware_stack = stack
 
-        # Runtime DI containers
-        server.runtime = MagicMock()
-        server.runtime.di_containers = {}
-
         return server
 
-    def test_skips_when_session_engine_exists(self):
-        """If session engine is already set, _ensure_admin_sessions is a no-op."""
+    def test_no_warning_when_session_engine_exists(self):
+        """If session engine is already set, no warning is emitted."""
         from aquilia.server import AquiliaServer
         server = self._make_server(session_engine=MagicMock())
 
-        # Call the unbound method with our mock
-        AquiliaServer._ensure_admin_sessions(server)
+        AquiliaServer._validate_admin_prerequisites(server)
 
-        # Should NOT have called middleware_stack.add
-        server.middleware_stack.add.assert_not_called()
+        # Logger.warning should NOT have been called
+        server.logger.warning.assert_not_called()
 
-    def test_skips_when_session_middleware_registered(self):
-        """If a 'session' middleware is already in the stack, no-op."""
+    def test_no_warning_when_session_middleware_registered(self):
+        """If a 'session' middleware is already in the stack, no warning."""
         from aquilia.server import AquiliaServer
         server = self._make_server(middleware_names=["exception", "session", "logging"])
 
-        AquiliaServer._ensure_admin_sessions(server)
-        server.middleware_stack.add.assert_not_called()
+        AquiliaServer._validate_admin_prerequisites(server)
+        server.logger.warning.assert_not_called()
 
-    def test_skips_when_auth_middleware_registered(self):
-        """If an 'auth' middleware is in the stack, no-op."""
+    def test_no_warning_when_auth_middleware_registered(self):
+        """If an 'auth' middleware is in the stack, no warning."""
         from aquilia.server import AquiliaServer
         server = self._make_server(middleware_names=["exception", "auth", "logging"])
 
-        AquiliaServer._ensure_admin_sessions(server)
-        server.middleware_stack.add.assert_not_called()
+        AquiliaServer._validate_admin_prerequisites(server)
+        server.logger.warning.assert_not_called()
 
-    def test_auto_enables_when_no_sessions(self):
-        """When no session engine and no session/auth middleware, auto-create one."""
+    def test_warns_when_no_sessions_configured(self):
+        """When no session engine and no session/auth middleware, emit warning."""
         from aquilia.server import AquiliaServer
         server = self._make_server(middleware_names=["exception", "logging"])
 
-        AquiliaServer._ensure_admin_sessions(server)
+        AquiliaServer._validate_admin_prerequisites(server)
 
-        # Should have called middleware_stack.add with a SessionMiddleware
-        server.middleware_stack.add.assert_called_once()
-        call_kwargs = server.middleware_stack.add.call_args
-        assert call_kwargs[1]["name"] == "session"
-        assert call_kwargs[1]["scope"] == "global"
+        # Should have emitted a warning
+        server.logger.warning.assert_called_once()
+        warn_msg = server.logger.warning.call_args[0][0]
+        assert "Sessions are NOT configured" in warn_msg
+        assert "aq admin check" in warn_msg
 
-        # Session engine should be set
-        assert server._session_engine is not None
-
-    def test_auto_session_uses_memory_store(self):
-        """Auto-created session engine uses in-memory store."""
-        from aquilia.server import AquiliaServer
-        from aquilia.sessions import MemoryStore
-        server = self._make_server(middleware_names=["exception"])
-
-        AquiliaServer._ensure_admin_sessions(server)
-
-        engine = server._session_engine
-        assert isinstance(engine.store, MemoryStore)
-
-    def test_auto_session_cookie_name(self):
-        """Auto-created session uses 'aquilia_admin_session' cookie."""
-        from aquilia.server import AquiliaServer
-        server = self._make_server(middleware_names=["exception"])
-
-        AquiliaServer._ensure_admin_sessions(server)
-
-        engine = server._session_engine
-        assert engine.transport.cookie_name == "aquilia_admin_session"
-
-    def test_auto_session_policy_name(self):
-        """Auto-created session policy is named 'admin_auto'."""
+    def test_warns_with_empty_middleware_stack(self):
+        """Even with completely empty middleware stack, emit warning."""
         from aquilia.server import AquiliaServer
         server = self._make_server(middleware_names=[])
 
-        AquiliaServer._ensure_admin_sessions(server)
+        AquiliaServer._validate_admin_prerequisites(server)
 
-        assert server._session_engine.policy.name == "admin_auto"
+        server.logger.warning.assert_called_once()
+        warn_msg = server.logger.warning.call_args[0][0]
+        assert "workspace.py" in warn_msg
+
+    def test_does_not_modify_middleware_stack(self):
+        """Validation method must NOT add anything to the middleware stack."""
+        from aquilia.server import AquiliaServer
+        server = self._make_server(middleware_names=["exception"])
+
+        AquiliaServer._validate_admin_prerequisites(server)
+
+        # Must NOT have called add — we only warn, never auto-fix
+        server.middleware_stack.add.assert_not_called()
+
+    def test_does_not_set_session_engine(self):
+        """Validation method must NOT create a session engine."""
+        from aquilia.server import AquiliaServer
+        from unittest.mock import MagicMock
+        server = self._make_server(middleware_names=[])
+        original_engine = server._session_engine
+
+        AquiliaServer._validate_admin_prerequisites(server)
+
+        # Session engine should be unchanged (still None-ish mock)
+        assert server._session_engine == original_engine
 
 
 class TestEnsureAdminStaticAssets:
@@ -1312,3 +1310,167 @@ class TestAdminCLIEmailRequired:
         fn = getattr(admin_createsuperuser, "callback", admin_createsuperuser)
         source = inspect.getsource(fn)
         assert "Troubleshooting" in source, "Should show troubleshooting on error"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 17. ADMIN CHECK COMMAND TESTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestAdminCheckCommand:
+    """Tests for the ``aq admin check`` pre-flight command."""
+
+    def test_admin_check_command_exists(self):
+        """admin check command must be registered."""
+        from aquilia.cli.__main__ import admin_check
+        assert admin_check is not None
+
+    def test_admin_check_has_fix_option(self):
+        """admin check must have a --fix flag."""
+        from aquilia.cli.__main__ import admin_check
+        params = {p.name: p for p in admin_check.params}
+        assert "fix" in params, "--fix option must exist"
+
+    def test_admin_check_has_json_option(self):
+        """admin check must have a --json flag."""
+        from aquilia.cli.__main__ import admin_check
+        params = {p.name: p for p in admin_check.params}
+        assert "as_json" in params, "--json option must exist"
+
+    def test_admin_check_validates_sessions(self):
+        """Source must check for .sessions( or Integration.auth(."""
+        import inspect
+        from aquilia.cli.__main__ import admin_check
+        fn = getattr(admin_check, "callback", admin_check)
+        source = inspect.getsource(fn)
+        assert ".sessions(" in source
+        assert "Integration.auth(" in source
+
+    def test_admin_check_validates_database(self):
+        """Source must check for Integration.database(."""
+        import inspect
+        from aquilia.cli.__main__ import admin_check
+        fn = getattr(admin_check, "callback", admin_check)
+        source = inspect.getsource(fn)
+        assert "Integration.database(" in source
+
+    def test_admin_check_validates_static_files(self):
+        """Source must check for Integration.static_files(."""
+        import inspect
+        from aquilia.cli.__main__ import admin_check
+        fn = getattr(admin_check, "callback", admin_check)
+        source = inspect.getsource(fn)
+        assert "Integration.static_files(" in source
+
+    def test_admin_check_checks_superuser(self):
+        """Source must check for existing superusers."""
+        import inspect
+        from aquilia.cli.__main__ import admin_check
+        fn = getattr(admin_check, "callback", admin_check)
+        source = inspect.getsource(fn)
+        assert "superuser" in source.lower()
+
+
+class TestAdminListUsersCommand:
+    """Tests for the ``aq admin listusers`` command."""
+
+    def test_listusers_command_exists(self):
+        """admin listusers command must be registered."""
+        from aquilia.cli.__main__ import admin_listusers
+        assert admin_listusers is not None
+
+    def test_listusers_has_json_option(self):
+        """admin listusers must have a --json flag."""
+        from aquilia.cli.__main__ import admin_listusers
+        params = {p.name: p for p in admin_listusers.params}
+        assert "as_json" in params
+
+    def test_listusers_has_active_only_option(self):
+        """admin listusers must have a --active-only flag."""
+        from aquilia.cli.__main__ import admin_listusers
+        params = {p.name: p for p in admin_listusers.params}
+        assert "active_only" in params
+
+    def test_listusers_has_database_url_option(self):
+        """admin listusers must have a --database-url option."""
+        from aquilia.cli.__main__ import admin_listusers
+        params = {p.name: p for p in admin_listusers.params}
+        assert "database_url" in params
+
+
+class TestAdminChangePasswordCommand:
+    """Tests for the ``aq admin changepassword`` command."""
+
+    def test_changepassword_command_exists(self):
+        """admin changepassword command must be registered."""
+        from aquilia.cli.__main__ import admin_changepassword
+        assert admin_changepassword is not None
+
+    def test_changepassword_has_username_argument(self):
+        """admin changepassword must accept a username argument."""
+        from aquilia.cli.__main__ import admin_changepassword
+        params = {p.name: p for p in admin_changepassword.params}
+        assert "username" in params
+
+    def test_changepassword_hides_password_input(self):
+        """Password input must be hidden."""
+        from aquilia.cli.__main__ import admin_changepassword
+        params = {p.name: p for p in admin_changepassword.params}
+        pwd_param = params.get("password")
+        assert pwd_param is not None
+        assert pwd_param.hide_input is True
+
+    def test_changepassword_has_confirmation_prompt(self):
+        """Password must require confirmation."""
+        from aquilia.cli.__main__ import admin_changepassword
+        params = {p.name: p for p in admin_changepassword.params}
+        pwd_param = params.get("password")
+        assert pwd_param.confirmation_prompt is not None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 18. CLI ENHANCEMENT TESTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestCLIEnhancements:
+    """Tests for CLI root group enhancements (--debug, --no-color, etc.)."""
+
+    def test_cli_has_debug_flag(self):
+        """Root CLI must have a --debug flag."""
+        from aquilia.cli.__main__ import cli
+        params = {p.name: p for p in cli.params}
+        assert "debug" in params, "--debug flag must exist"
+
+    def test_cli_has_no_color_flag(self):
+        """Root CLI must have a --no-color flag."""
+        from aquilia.cli.__main__ import cli
+        params = {p.name: p for p in cli.params}
+        assert "no_color" in params, "--no-color flag must exist"
+
+    def test_cli_has_verbose_flag(self):
+        """Root CLI must have a --verbose/-v flag."""
+        from aquilia.cli.__main__ import cli
+        params = {p.name: p for p in cli.params}
+        assert "verbose" in params, "--verbose flag must exist"
+
+    def test_cli_has_quiet_flag(self):
+        """Root CLI must have a --quiet/-q flag."""
+        from aquilia.cli.__main__ import cli
+        params = {p.name: p for p in cli.params}
+        assert "quiet" in params, "--quiet flag must exist"
+
+    def test_run_has_skip_checks_flag(self):
+        """Run command must have a --skip-checks flag."""
+        from aquilia.cli.__main__ import run
+        params = {p.name: p for p in run.params}
+        assert "skip_checks" in params, "--skip-checks flag must exist"
+
+    def test_run_preflight_checks_admin(self):
+        """Run command source must contain admin pre-flight logic."""
+        import inspect
+        from aquilia.cli.__main__ import run
+        fn = getattr(run, "callback", run)
+        source = inspect.getsource(fn)
+        assert "Integration.admin(" in source, "Should detect admin integration"
+        assert "skip_checks" in source, "Should respect --skip-checks"

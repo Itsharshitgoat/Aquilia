@@ -1617,13 +1617,10 @@ class AquiliaServer:
             self.controller_router._initialized = False
             self.controller_router.initialize()
 
-            # ── Auto-enable sessions if not already configured ────────────
+            # ── Validate admin prerequisites ─────────────────────────────
             # The admin controller REQUIRES sessions to store the login
-            # identity.  If the user hasn't explicitly enabled sessions
-            # (or auth) in their workspace, we inject a lightweight
-            # in-memory session middleware automatically so that admin
-            # login works out of the box.
-            self._ensure_admin_sessions()
+            # identity.  Warn loudly if sessions are not configured.
+            self._validate_admin_prerequisites()
 
             # ── Auto-register assets/ as /static if not already served ────
             # The admin templates reference /static/logo.png and
@@ -1641,114 +1638,42 @@ class AquiliaServer:
         except Exception as e:
             self.logger.error(f"Admin integration failed: {e}", exc_info=True)
 
-    def _ensure_admin_sessions(self) -> None:
+    def _validate_admin_prerequisites(self) -> None:
         """
-        Ensure session middleware is present when admin is enabled.
+        Validate that admin prerequisites are met.
 
-        The admin controller relies on ``ctx.session.data`` to persist
-        the ``_admin_identity`` across requests.  If the workspace has
-        not configured sessions (or auth — which also brings sessions),
-        we inject a lightweight in-memory session engine + middleware so
-        the admin login/logout flow works out of the box.
+        The admin controller REQUIRES sessions (or auth, which implies
+        sessions) to store the ``_admin_identity`` cookie across
+        requests.  If neither is configured we emit a loud warning so
+        the developer knows *why* login fails.
 
-        This is a **safety net** — users who have already enabled
-        sessions (or auth) via ``Workspace.sessions()`` or
-        ``Integration.sessions()`` will not be affected.
+        Run ``aq admin check`` before ``aq run`` to catch this early.
         """
-        # If a session engine was already created during _setup_middleware,
-        # the admin will work fine — nothing to do.
-        if getattr(self, "_session_engine", None) is not None:
-            return
+        has_session_engine = getattr(self, "_session_engine", None) is not None
 
-        # Check if a session middleware is already registered in the stack
         existing_names = {
             getattr(desc, "name", None)
             for desc in getattr(self.middleware_stack, "middlewares", [])
         }
-        if "session" in existing_names or "auth" in existing_names:
-            return
+        has_session_mw = "session" in existing_names or "auth" in existing_names
 
-        self.logger.info(
-            "Admin integration detected but sessions are not configured. "
-            "Auto-enabling in-memory session middleware for admin login support."
+        if has_session_engine or has_session_mw:
+            return  # All good
+
+        self.logger.warning(
+            "\n"
+            "  ╔══════════════════════════════════════════════════════════════╗\n"
+            "  ║  ADMIN: Sessions are NOT configured!                       ║\n"
+            "  ║                                                            ║\n"
+            "  ║  The admin dashboard requires sessions to store login      ║\n"
+            "  ║  state.  Without it, login will redirect in a loop.        ║\n"
+            "  ║                                                            ║\n"
+            "  ║  Fix:  Uncomment .sessions(...) in workspace.py            ║\n"
+            "  ║  Or:   Enable .integrate(Integration.auth(...))            ║\n"
+            "  ║                                                            ║\n"
+            "  ║  Run 'aq admin check' for a full prerequisites report.     ║\n"
+            "  ╚══════════════════════════════════════════════════════════════╝"
         )
-
-        try:
-            from datetime import timedelta
-            from aquilia.sessions import (
-                SessionEngine,
-                SessionPolicy,
-                PersistencePolicy,
-                ConcurrencyPolicy,
-                TransportPolicy,
-                MemoryStore,
-                CookieTransport,
-            )
-
-            policy = SessionPolicy(
-                name="admin_auto",
-                ttl=timedelta(days=1),
-                idle_timeout=timedelta(hours=2),
-                rotate_on_use=False,
-                rotate_on_privilege_change=False,
-                persistence=PersistencePolicy(
-                    enabled=True,
-                    store_name="memory",
-                    write_through=True,
-                ),
-                concurrency=ConcurrencyPolicy(
-                    max_sessions_per_principal=10,
-                    behavior_on_limit="evict_oldest",
-                ),
-                transport=TransportPolicy(
-                    adapter="cookie",
-                    cookie_name="aquilia_admin_session",
-                    cookie_httponly=True,
-                    cookie_secure=False,   # dev-friendly default
-                    cookie_samesite="lax",
-                    header_name="X-Session-ID",
-                ),
-                scope="user",
-            )
-
-            store = MemoryStore()
-            transport = CookieTransport(policy.transport)
-
-            engine = SessionEngine(policy=policy, store=store, transport=transport)
-            self._session_engine = engine
-
-            self.middleware_stack.add(
-                SessionMiddleware(engine),
-                scope="global",
-                priority=15,
-                name="session",
-            )
-
-            # Register in DI so any future lookups can find the engine
-            try:
-                from aquilia.di.providers import ValueProvider
-                engine_provider = ValueProvider(
-                    token=SessionEngine,
-                    value=engine,
-                    scope="app",
-                    name="session_engine_instance",
-                )
-                for container in self.runtime.di_containers.values():
-                    container.register(engine_provider)
-            except Exception:
-                pass  # DI registration is best-effort
-
-            self.logger.info(
-                "Auto-enabled in-memory session middleware "
-                "(cookie: aquilia_admin_session, ttl: 1 day)"
-            )
-
-        except Exception as e:
-            self.logger.error(
-                f"Failed to auto-enable sessions for admin: {e}. "
-                "Admin login will not work. Enable sessions manually in workspace.py.",
-                exc_info=True,
-            )
 
     def _ensure_admin_static_assets(self) -> None:
         """

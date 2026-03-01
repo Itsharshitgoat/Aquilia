@@ -199,10 +199,12 @@ class AquiliaGroup(click.Group):
 
 @click.group(cls=AquiliaGroup)
 @click.version_option(version=__version__, prog_name=__cli_name__)
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-@click.option('--quiet', '-q', is_flag=True, help='Minimal output')
+@click.option('--verbose', '-v', is_flag=True, help='Verbose output (show debug details, full tracebacks)')
+@click.option('--quiet', '-q', is_flag=True, help='Minimal output (suppress banners & decorations)')
+@click.option('--debug', is_flag=True, help='Enable debug mode (full stack traces on errors)')
+@click.option('--no-color', is_flag=True, help='Disable coloured output')
 @click.pass_context
-def cli(ctx, verbose: bool, quiet: bool):
+def cli(ctx, verbose: bool, quiet: bool, debug: bool, no_color: bool):
     """Manifest-driven, artifact-first project orchestration.
 
     \b
@@ -216,6 +218,12 @@ def cli(ctx, verbose: bool, quiet: bool):
     ctx.ensure_object(dict)
     ctx.obj['verbose'] = verbose
     ctx.obj['quiet'] = quiet
+    ctx.obj['debug'] = debug
+    ctx.obj['no_color'] = no_color
+
+    # Disable click/ANSI colour if requested
+    if no_color:
+        ctx.color = False
 
     # Workspace guard — operational commands require workspace.py
     _require_workspace(ctx)
@@ -460,8 +468,9 @@ def generate_controller(ctx, name: str, prefix: Optional[str], resource: Optiona
 @cli.command('validate')
 @click.option('--strict', is_flag=True, help='Strict validation (prod-level)')
 @click.option('--module', type=str, help='Validate single module')
+@click.option('--json', 'as_json', is_flag=True, help='Output results as JSON')
 @click.pass_context
-def validate(ctx, strict: bool, module: Optional[str]):
+def validate(ctx, strict: bool, module: Optional[str], as_json: bool):
     """
     Validate workspace manifests.
     
@@ -469,6 +478,7 @@ def validate(ctx, strict: bool, module: Optional[str]):
       aq validate
       aq validate --strict
       aq validate --module=users
+      aq validate --json
     """
     from .commands.validate import validate_workspace
     
@@ -478,6 +488,21 @@ def validate(ctx, strict: bool, module: Optional[str]):
             module_filter=module,
             verbose=ctx.obj['verbose'],
         )
+
+        if as_json:
+            import json as _json
+            click.echo(_json.dumps({
+                "valid": result.is_valid,
+                "modules": result.module_count,
+                "routes": result.route_count,
+                "providers": result.provider_count,
+                "fingerprint": str(result.fingerprint)[:24] if result.fingerprint else None,
+                "faults": result.faults if hasattr(result, 'faults') else [],
+                "warnings": result.warnings if hasattr(result, 'warnings') else [],
+            }, indent=2))
+            if not result.is_valid:
+                sys.exit(1)
+            return
         
         if not ctx.obj['quiet']:
             click.echo()
@@ -555,18 +580,49 @@ def compile(ctx, watch: bool, output: Optional[str]):
 @click.option('--port', type=int, default=8000, help='Server port')
 @click.option('--host', type=str, default='127.0.0.1', help='Server host')
 @click.option('--reload/--no-reload', default=True, help='Enable hot-reload')
+@click.option('--skip-checks', is_flag=True, help='Skip pre-flight dependency checks')
 @click.pass_context
-def run(ctx, mode: str, port: int, host: str, reload: bool):
+def run(ctx, mode: str, port: int, host: str, reload: bool, skip_checks: bool):
     """
     Start development server.
-    
+
+    Runs admin pre-flight checks automatically when admin integration
+    is detected in workspace.py. Use --skip-checks to bypass.
+
     Examples:
       aq run
       aq run --port=3000
       aq run --mode=test --no-reload
+      aq run --skip-checks
     """
     from .commands.run import run_dev_server
-    
+
+    # ── Admin pre-flight checks ──────────────────────────────────────
+    if not skip_checks:
+        workspace_file = Path("workspace.py")
+        if workspace_file.exists():
+            ws_content = workspace_file.read_text()
+            active_lines = "\n".join(
+                line for line in ws_content.splitlines()
+                if not line.strip().startswith("#")
+            )
+            if "Integration.admin(" in active_lines:
+                # Check session support
+                has_sessions = (
+                    ".sessions(" in active_lines
+                    or "Integration.sessions(" in active_lines
+                    or "Integration.auth(" in active_lines
+                )
+                if not has_sessions:
+                    click.echo()
+                    warning(
+                        f"  ! Admin integration detected but sessions are NOT configured.\n"
+                        f"    Admin login will NOT work without session support.\n"
+                        f"    Run 'aq admin check' for full diagnostics or add .sessions() to workspace.py.\n"
+                        f"    Use --skip-checks to suppress this warning."
+                    )
+                    click.echo()
+
     try:
         run_dev_server(
             mode=mode,
@@ -575,7 +631,7 @@ def run(ctx, mode: str, port: int, host: str, reload: bool):
             reload=reload,
             verbose=ctx.obj['verbose'],
         )
-    
+
     except KeyboardInterrupt:
         if not ctx.obj['quiet']:
             click.echo()
@@ -899,6 +955,7 @@ def migrate(ctx, source: str, dry_run: bool):
 
 
 @cli.command('doctor')
+@click.option('--json', 'as_json', is_flag=True, help='Output results as JSON')
 @click.pass_context
 def doctor(ctx):
     """Diagnose workspace issues.
@@ -906,11 +963,25 @@ def doctor(ctx):
     Performs comprehensive health checks across all layers:
     environment, workspace structure, manifests, Aquilary pipeline,
     integrations, and deployment readiness.
+
+    Examples:
+      aq doctor
+      aq doctor -v
+      aq doctor --json
     """
     from .commands.doctor import diagnose_workspace
 
     try:
         issues = diagnose_workspace(verbose=ctx.obj['verbose'])
+
+        if as_json:
+            import json as _json
+            click.echo(_json.dumps({
+                "healthy": len(issues) == 0,
+                "issue_count": len(issues),
+                "issues": issues,
+            }, indent=2))
+            return
 
         click.echo()
         if not issues:
@@ -930,6 +1001,9 @@ def doctor(ctx):
 
     except Exception as e:
         error(f"  {_CROSS} Diagnosis failed: {e}")
+        if ctx.obj.get('debug'):
+            import traceback
+            traceback.print_exc()
         sys.exit(1)
 
 
@@ -1031,9 +1105,17 @@ def ws_kick(ctx, conn: str, reason: str, redis_url: Optional[str]):
 @click.option('--path', type=click.Path(), default=None, help='Workspace path')
 @click.option('--sync', is_flag=True, help='Auto-sync discovered components into manifest.py files')
 @click.option('--dry-run', is_flag=True, help='Preview sync changes without writing (use with --sync)')
+@click.option('--json', 'as_json', is_flag=True, help='Output results as JSON')
 @click.pass_context
-def discover(ctx, path: Optional[str], sync: bool, dry_run: bool):
-    """Inspect auto-discovered modules in workspace."""
+def discover(ctx, path: Optional[str], sync: bool, dry_run: bool, as_json: bool):
+    """Inspect auto-discovered modules in workspace.
+
+    Examples:
+      aq discover
+      aq discover --sync
+      aq discover --sync --dry-run
+      aq discover --json
+    """
     from .commands.discover import DiscoveryInspector
 
     try:
@@ -1046,6 +1128,9 @@ def discover(ctx, path: Optional[str], sync: bool, dry_run: bool):
         )
     except Exception as e:
         error(f"  {_CROSS} Discovery failed: {e}")
+        if ctx.obj.get('debug'):
+            import traceback
+            traceback.print_exc()
         sys.exit(1)
 
 
@@ -1582,16 +1667,284 @@ def test(ctx, paths: tuple, pattern: Optional[str], markers: Optional[str],
 
 @cli.group(cls=AquiliaGroup)
 def admin():
-    """Admin dashboard management."""
+    """Admin dashboard management and diagnostics."""
     pass
+
+
+@admin.command('check')
+@click.option('--fix', is_flag=True, help='Auto-fix missing configuration by uncommenting workspace.py sections')
+@click.option('--json', 'as_json', is_flag=True, help='Output results as JSON')
+@click.pass_context
+def admin_check(ctx, fix: bool, as_json: bool):
+    """
+    Pre-flight check for admin dashboard dependencies.
+
+    Validates that all required integrations (sessions, database,
+    static files, templates) are properly configured in workspace.py
+    before starting the server.
+
+    Run this BEFORE 'aq run' to catch configuration issues early.
+
+    Examples:
+      aq admin check
+      aq admin check --fix
+      aq admin check --json
+    """
+    workspace_file = Path("workspace.py")
+    if not workspace_file.exists():
+        error(f"  {_CROSS} workspace.py not found")
+        sys.exit(1)
+
+    content = workspace_file.read_text()
+
+    # Remove comment-only lines for active config detection
+    active_lines = "\n".join(
+        line for line in content.splitlines()
+        if not line.strip().startswith("#")
+    )
+
+    checks: list[dict] = []
+
+    # 1. Admin integration enabled?
+    admin_enabled = "Integration.admin(" in active_lines
+    checks.append({
+        "name": "Admin Integration",
+        "status": "ok" if admin_enabled else "fail",
+        "detail": "Integration.admin() is configured" if admin_enabled else (
+            "Integration.admin() not found in workspace.py. "
+            "Add: .integrate(Integration.admin(url_prefix='/admin', auto_discover=True))"
+        ),
+    })
+
+    if not admin_enabled:
+        # No point checking dependencies if admin isn't even enabled
+        if as_json:
+            import json as _json
+            click.echo(_json.dumps({"passed": False, "checks": checks}, indent=2))
+        else:
+            click.echo()
+            banner("AquilAdmin", subtitle="Pre-flight Check")
+            click.echo()
+            error(f"  {_CROSS} Admin integration is not enabled in workspace.py")
+            click.echo()
+            next_steps([
+                "Add .integrate(Integration.admin(...)) to workspace.py",
+                "aq admin check",
+            ])
+        sys.exit(1)
+
+    # 2. Sessions enabled?
+    sessions_active = (
+        ".sessions(" in active_lines
+        or "Integration.sessions(" in active_lines
+    )
+    auth_active = "Integration.auth(" in active_lines
+    has_session_support = sessions_active or auth_active
+    checks.append({
+        "name": "Sessions",
+        "status": "ok" if has_session_support else "fail",
+        "detail": (
+            ("Sessions via .sessions()" if sessions_active else "Sessions via Integration.auth()")
+            if has_session_support else (
+                "Sessions are NOT configured. Admin login requires sessions. "
+                "Uncomment .sessions(...) in workspace.py or enable Integration.auth()"
+            )
+        ),
+    })
+
+    # 3. Database configured?
+    db_active = "Integration.database(" in active_lines
+    db_has_url = bool(_re.search(r'url\s*=\s*["\']', active_lines))
+    if db_active and db_has_url:
+        db_status = "ok"
+        db_detail = "Database integration with URL configured"
+    elif db_active:
+        db_status = "warn"
+        db_detail = "Database integration enabled but no URL specified (using default sqlite)"
+    else:
+        db_status = "warn"
+        db_detail = "No database integration found. Admin users are stored in admin_users table"
+    checks.append({"name": "Database", "status": db_status, "detail": db_detail})
+
+    # 4. Static files configured?
+    static_active = "Integration.static_files(" in active_lines
+    checks.append({
+        "name": "Static Files",
+        "status": "ok" if static_active else "warn",
+        "detail": (
+            "Static files middleware configured"
+            if static_active else
+            "Static files not configured. Admin CSS/JS may not load. "
+            "Add: .integrate(Integration.static_files(directories={\"/static\": \"static\"}))"
+        ),
+    })
+
+    # 5. Templates configured?
+    templates_active = "Integration.templates" in active_lines or "templates" in active_lines.lower()
+    checks.append({
+        "name": "Templates",
+        "status": "ok" if templates_active else "info",
+        "detail": (
+            "Template engine configured"
+            if templates_active else
+            "Template engine not explicitly configured (admin uses built-in renderer)"
+        ),
+    })
+
+    # 6. Superuser exists?
+    has_superuser = False
+    su_detail = "Unknown (cannot check without database connection)"
+    try:
+        import asyncio as _aio
+        database_url = _detect_workspace_db_url()
+
+        async def _check_su():
+            from aquilia.db.engine import configure_database
+            db = configure_database(database_url)
+            await db.connect()
+            try:
+                result = await db.fetch_one("SELECT COUNT(*) as cnt FROM admin_users WHERE is_superuser = 1")
+                return result["cnt"] if result else 0
+            finally:
+                await db.disconnect()
+
+        count = _aio.run(_check_su())
+        has_superuser = count > 0
+        su_detail = f"{count} superuser(s) found" if has_superuser else (
+            "No superusers found. Run: aq admin createsuperuser"
+        )
+    except Exception:
+        su_detail = "Could not check (database not accessible or table missing). Run: aq db migrate && aq admin createsuperuser"
+    checks.append({
+        "name": "Superuser",
+        "status": "ok" if has_superuser else "warn",
+        "detail": su_detail,
+    })
+
+    # 7. assets/ directory exists?
+    assets_dir = Path("assets")
+    has_assets = assets_dir.is_dir()
+    checks.append({
+        "name": "Admin Assets",
+        "status": "ok" if has_assets else "info",
+        "detail": (
+            f"assets/ directory found ({len(list(assets_dir.iterdir()))} files)"
+            if has_assets else
+            "assets/ directory not found (admin will use default styles)"
+        ),
+    })
+
+    # ── Output ───────────────────────────────────────────────────────
+    all_passed = all(c["status"] in ("ok", "info") for c in checks)
+    has_failures = any(c["status"] == "fail" for c in checks)
+
+    if as_json:
+        import json as _json
+        click.echo(_json.dumps({
+            "passed": all_passed,
+            "has_failures": has_failures,
+            "checks": checks,
+        }, indent=2))
+    else:
+        click.echo()
+        banner("AquilAdmin", subtitle="Pre-flight Check")
+        click.echo()
+
+        _status_icons = {"ok": _CHECK, "fail": _CROSS, "warn": "!", "info": _BULLET}
+        _status_colors = {"ok": "green", "fail": "red", "warn": "yellow", "info": "cyan"}
+
+        for c in checks:
+            icon = _status_icons.get(c["status"], "?")
+            color = _status_colors.get(c["status"], "white")
+            name_styled = click.style(f"{c['name']}:", bold=True)
+            icon_styled = click.style(f"  {icon}", fg=color)
+            click.echo(f"{icon_styled} {name_styled}")
+            if ctx.obj.get('verbose') or c["status"] in ("fail", "warn"):
+                dim(f"      {c['detail']}")
+
+        click.echo()
+        if has_failures:
+            error(f"  {_CROSS} Pre-flight check FAILED — fix the errors above before running aq run")
+            click.echo()
+            if not has_session_support:
+                panel(
+                    [
+                        "The admin dashboard requires session support.",
+                        "Add this to your workspace.py:",
+                        "",
+                        "  from datetime import timedelta",
+                        "  from aquilia.sessions import SessionPolicy",
+                        "",
+                        "  .sessions(",
+                        "      policies=[",
+                        '          SessionPolicy(name="default",',
+                        "              ttl=timedelta(days=7),",
+                        "              idle_timeout=timedelta(hours=1),",
+                        "          ),",
+                        "      ],",
+                        "  )",
+                    ],
+                    title="Required: Enable Sessions",
+                    fg="yellow",
+                )
+            sys.exit(1)
+        elif any(c["status"] == "warn" for c in checks):
+            warning(f"  ! Pre-flight check passed with warnings")
+        else:
+            success(f"  {_CHECK} All pre-flight checks passed")
+        click.echo()
+
+    # ── Auto-fix ─────────────────────────────────────────────────────
+    if fix and not has_session_support:
+        # Uncomment the .sessions(...) block
+        if "# .sessions(" in content:
+            fixed = content.replace("# .sessions(", ".sessions(")
+            # Uncomment lines within the sessions block
+            lines = fixed.splitlines()
+            in_sessions_block = False
+            fixed_lines = []
+            for line in lines:
+                stripped = line.lstrip()
+                if ".sessions(" in line and not stripped.startswith("#"):
+                    in_sessions_block = True
+                    fixed_lines.append(line)
+                    continue
+                if in_sessions_block:
+                    if stripped.startswith("# ") and (
+                        "policies=" in stripped
+                        or "SessionPolicy" in stripped
+                        or "ttl=" in stripped
+                        or "idle_timeout=" in stripped
+                        or "]," in stripped
+                        or ")," in stripped
+                        or ")" in stripped
+                    ):
+                        # Uncomment
+                        fixed_lines.append(line.replace("# ", "", 1))
+                    else:
+                        fixed_lines.append(line)
+                    if stripped.rstrip().endswith(")") and "SessionPolicy" not in stripped:
+                        in_sessions_block = False
+                else:
+                    fixed_lines.append(line)
+
+            workspace_file.write_text("\n".join(fixed_lines))
+            success(f"  {_CHECK} Auto-fixed: Uncommented .sessions(...) in workspace.py")
+            click.echo()
+            next_steps([
+                "Review workspace.py to verify the sessions config",
+                "aq admin check",
+                "aq run",
+            ])
 
 
 @admin.command('createsuperuser')
 @click.option('--username', prompt=click.style('  Username', fg='cyan', bold=True), help='Admin username')
 @click.option('--email', prompt=click.style('  Email', fg='cyan', bold=True), help='Admin email (required)')
 @click.option('--password', prompt=click.style('  Password', fg='cyan', bold=True), hide_input=True, confirmation_prompt=click.style('  Confirm password', fg='cyan', bold=True), help='Admin password')
+@click.option('--no-input', is_flag=True, hidden=True, help='Non-interactive mode (requires all options)')
 @click.pass_context
-def admin_createsuperuser(ctx, username: str, email: str, password: str):
+def admin_createsuperuser(ctx, username: str, email: str, password: str, no_input: bool):
     """
     Create an admin superuser in the database.
 
@@ -1759,10 +2112,150 @@ def admin_createsuperuser(ctx, username: str, email: str, password: str):
 
         # ── Next steps ───────────────────────────────────────────────
         next_steps([
+            "aq admin check",
             "aq run",
             f"Visit http://localhost:8000/admin/",
             f"Log in with username '{username}' and your password",
         ])
+
+
+@admin.command('listusers')
+@click.option('--database-url', type=str, default=None, help='Database URL')
+@click.option('--json', 'as_json', is_flag=True, help='Output as JSON')
+@click.option('--active-only', is_flag=True, help='Show only active users')
+@click.pass_context
+def admin_listusers(ctx, database_url: Optional[str], as_json: bool, active_only: bool):
+    """
+    List all admin users.
+
+    Examples:
+      aq admin listusers
+      aq admin listusers --json
+      aq admin listusers --active-only
+    """
+    import asyncio
+
+    if database_url is None:
+        database_url = _detect_workspace_db_url()
+
+    async def _list():
+        from aquilia.db.engine import configure_database
+        db = configure_database(database_url)
+        await db.connect()
+        try:
+            query = "SELECT id, username, email, is_active, is_superuser, is_staff, date_joined, last_login FROM admin_users"
+            if active_only:
+                query += " WHERE is_active = 1"
+            query += " ORDER BY date_joined DESC"
+            rows = await db.fetch_all(query)
+            return [dict(r) for r in rows]
+        finally:
+            await db.disconnect()
+
+    try:
+        users = asyncio.run(_list())
+    except Exception as e:
+        error(f"  {_CROSS} Failed to list users: {e}")
+        if ctx.obj.get('verbose'):
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+    if as_json:
+        import json as _json
+        # Convert datetime objects to strings
+        for u in users:
+            for k, v in u.items():
+                if hasattr(v, 'isoformat'):
+                    u[k] = v.isoformat()
+        click.echo(_json.dumps(users, indent=2))
+        return
+
+    if not ctx.obj.get('quiet'):
+        click.echo()
+        section(f"Admin Users ({len(users)})")
+        click.echo()
+
+        if not users:
+            info("  No admin users found. Run: aq admin createsuperuser")
+        else:
+            headers = ["ID", "Username", "Email", "Active", "Super", "Staff", "Joined"]
+            rows_data = []
+            for u in users:
+                joined = u.get("date_joined", "")
+                if hasattr(joined, 'strftime'):
+                    joined = joined.strftime("%Y-%m-%d")
+                rows_data.append([
+                    str(u.get("id", "?"))[:8],
+                    u.get("username", ""),
+                    u.get("email", ""),
+                    _CHECK if u.get("is_active") else _CROSS,
+                    _CHECK if u.get("is_superuser") else _CROSS,
+                    _CHECK if u.get("is_staff") else _CROSS,
+                    str(joined)[:10],
+                ])
+            table(headers, rows_data)
+        click.echo()
+
+
+@admin.command('changepassword')
+@click.argument('username')
+@click.option('--password', prompt=click.style('  New password', fg='cyan', bold=True),
+              hide_input=True, confirmation_prompt=click.style('  Confirm password', fg='cyan', bold=True),
+              help='New password')
+@click.option('--database-url', type=str, default=None, help='Database URL')
+@click.pass_context
+def admin_changepassword(ctx, username: str, password: str, database_url: Optional[str]):
+    """
+    Change an admin user's password.
+
+    Examples:
+      aq admin changepassword admin
+      aq admin changepassword admin --password=newsecret
+    """
+    import asyncio
+
+    if database_url is None:
+        database_url = _detect_workspace_db_url()
+
+    if len(password) < 4:
+        error(f"  {_CROSS} Password must be at least 4 characters")
+        sys.exit(1)
+
+    async def _change():
+        from aquilia.db.engine import configure_database
+        from aquilia.auth.hashing import PasswordHasher
+        db = configure_database(database_url)
+        await db.connect()
+        try:
+            hasher = PasswordHasher()
+            hashed = hasher.hash(password)
+            result = await db.execute(
+                "UPDATE admin_users SET password_hash = :hash WHERE username = :username",
+                {"hash": hashed, "username": username},
+            )
+            # Check if user was found
+            row = await db.fetch_one(
+                "SELECT id FROM admin_users WHERE username = :username",
+                {"username": username},
+            )
+            return row is not None
+        finally:
+            await db.disconnect()
+
+    try:
+        found = asyncio.run(_change())
+    except Exception as e:
+        error(f"  {_CROSS} Failed to change password: {e}")
+        sys.exit(1)
+
+    if found:
+        click.echo()
+        success(f"  {_CHECK} Password changed for user '{username}'")
+        click.echo()
+    else:
+        error(f"  {_CROSS} User '{username}' not found")
+        sys.exit(1)
 
 
 @admin.command('status')
