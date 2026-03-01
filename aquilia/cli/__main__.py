@@ -214,21 +214,31 @@ def init_workspace(ctx, name: str, minimal: bool, template: Optional[str]):
             tree_item("workspace.py", depth=0)
             tree_item("starter.py", depth=0)
             tree_item("config/", depth=0)
+            tree_item("base.yaml", depth=1)
             if not minimal:
-                tree_item("base.yaml", depth=1)
                 tree_item("dev.yaml", depth=1)
                 tree_item("prod.yaml", depth=1, last=True)
-                tree_item("Dockerfile", depth=0)
-                tree_item("docker-compose.yml", depth=0)
-                tree_item(".gitignore", depth=0, last=True)
             else:
                 tree_item("base.yaml", depth=1, last=True)
+            tree_item(".env.example", depth=0)
+            tree_item(".editorconfig", depth=0)
+            tree_item(".gitignore", depth=0)
+            tree_item("requirements.txt", depth=0)
+            tree_item("tests/", depth=0)
+            tree_item("conftest.py", depth=1)
+            tree_item("test_smoke.py", depth=1, last=True)
+            if not minimal:
+                tree_item("Makefile", depth=0)
+                tree_item("Dockerfile", depth=0)
+                tree_item("docker-compose.yml", depth=0, last=True)
             click.echo()
 
             next_steps([
                 f"cd {name}",
+                "cp .env.example .env",
+                "pip install -r requirements.txt",
                 "aq add module <module_name>",
-                "aq run",
+                "make run",
             ])
     
     except Exception as e:
