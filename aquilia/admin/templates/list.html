@@ -123,6 +123,9 @@
 {% endblock %}
 
 {% block extra_js %}
+// ── URL constants (single source of truth) ──────────────────────────
+var BASE_URL = '{{ url_prefix|default("/admin") }}/{{ model_name|lower }}';
+
 // ── Live Search (debounced, optimized) ──────────────────────────────
 (function() {
     var input = document.getElementById('liveSearchInput');
@@ -144,7 +147,8 @@
 
         debounceTimer = setTimeout(function() {
             lastQuery = q;
-            var url = '{{ url_prefix|default("/admin") }}/{{ model_name|lower }}/' + (q ? '?q=' + encodeURIComponent(q) : '');
+            // Empty query navigates back to base list (no trailing slash, no stale ?q=)
+            var url = q ? BASE_URL + '?q=' + encodeURIComponent(q) : BASE_URL;
             window.location.href = url;
         }, DEBOUNCE_MS);
     });
@@ -235,7 +239,10 @@ function sortColumn(col) {
 // ── Keyboard shortcuts ──────────────────────────────────────────────
 document.addEventListener('keydown', function(e) {
     if (['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) return;
-    if (e.key === 'n') window.location.href = '{{ url_prefix|default("/admin") }}/{{ model_name|lower }}/add';
+    // 'n' — new record (only without modifier keys to avoid conflicts)
+    if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        window.location.href = BASE_URL + '/add';
+    }
 });
 
 // ── Custom Confirmation Modal (replaces browser confirm/alert) ──────
@@ -289,7 +296,7 @@ function showConfirmModal(title, message, onConfirm, isDanger) {
 function doDelete(pk) {
     var form = document.createElement('form');
     form.method = 'POST';
-    form.action = '{{ url_prefix|default("/admin") }}/{{ model_name|lower }}/' + pk + '/delete';
+    form.action = BASE_URL + '/' + pk + '/delete';
     document.body.appendChild(form);
     form.submit();
 }
@@ -298,7 +305,7 @@ function doDelete(pk) {
 function doDuplicate(pk) {
     var form = document.createElement('form');
     form.method = 'POST';
-    form.action = '{{ url_prefix|default("/admin") }}/{{ model_name|lower }}/action';
+    form.action = BASE_URL + '/action';
     var actionInput = document.createElement('input');
     actionInput.type = 'hidden'; actionInput.name = 'action'; actionInput.value = 'duplicate_selected';
     form.appendChild(actionInput);
@@ -311,7 +318,7 @@ function doDuplicate(pk) {
 
 // ── Quick Update (redirects to edit form) ───────────────────────────
 function quickUpdate(pk) {
-    window.location.href = '{{ url_prefix|default("/admin") }}/{{ model_name|lower }}/' + pk;
+    window.location.href = BASE_URL + '/' + pk;
 }
 
 // ── Dropdown CSS injection ──────────────────────────────────────────
