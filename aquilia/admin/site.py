@@ -1398,7 +1398,15 @@ class AdminSite:
         for record_data in records_raw:
             # paginate_queryset calls to_dict(); we may get dicts or model instances
             if isinstance(record_data, dict):
-                row = {"pk": record_data.get("pk") or record_data.get("id")}
+                # Prefer explicit 'pk' key; fall back to integer 'id'; avoid
+                # using a non-integer 'id' (e.g. entry_id = 'audit_xxxx') as pk.
+                _raw_pk = record_data.get("pk")
+                if _raw_pk is None:
+                    _id = record_data.get("id")
+                    # Only use 'id' as pk when it looks like an integer
+                    if isinstance(_id, int) or (isinstance(_id, str) and _id.isdigit()):
+                        _raw_pk = _id
+                row = {"pk": _raw_pk}
                 for field_name in list_display:
                     raw_val = record_data.get(field_name)
                     row[field_name] = admin.format_value(field_name, raw_val)

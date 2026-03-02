@@ -352,7 +352,8 @@ a { color: inherit; text-decoration: none; transition: color 0.15s var(--ease); 
 /* ═══ TABLE ═══════════════════════════════════════════════════ */
 .table-container {
   background: var(--bg-glass); border: 1px solid var(--border-color);
-  border-radius: var(--radius); backdrop-filter: blur(12px); overflow: hidden;
+  border-radius: var(--radius); backdrop-filter: blur(12px);
+  overflow-x: auto; overflow-y: hidden;
 }
 .admin-table { width: 100%; border-collapse: collapse; }
 .admin-table th {

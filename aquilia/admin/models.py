@@ -558,6 +558,7 @@ if _HAS_ORM:
             ts = self.timestamp
             ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
             return {
+                "pk": self.pk,  # real integer primary key for admin URLs
                 "id": self.entry_id,
                 "timestamp": ts_str,
                 "user_id": self.user_id,

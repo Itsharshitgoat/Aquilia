@@ -245,7 +245,27 @@ def _register_admin_models(site: "AdminSite") -> None:
             verbose_name_plural = "Sessions"
         site.register_admin(AdminSession, AdminSessionAdmin(model=AdminSession))
 
-    logger.debug("Registered built-in admin models (ContentType, Permission, Group, User, LogEntry, Session)")
+    # ── AdminAuditEntry Admin ──
+    try:
+        from .models import AdminAuditEntry
+        if not site.is_registered(AdminAuditEntry):
+            class AdminAuditEntryAdmin(ModelAdmin):
+                list_display = ["id", "entry_id", "timestamp", "user_id", "username", "role", "action", "model_name", "record_pk"]
+                search_fields = ["username", "action", "model_name", "entry_id"]
+                list_filter = ["action", "role"]
+                ordering = ["-timestamp"]
+                readonly_fields = ["id", "entry_id", "timestamp", "user_id", "username",
+                                   "role", "action", "model_name", "record_pk",
+                                   "changes_json", "ip_address", "user_agent",
+                                   "metadata_json", "success", "error_message"]
+                icon = "📋"
+                verbose_name = "Audit Entry"
+                verbose_name_plural = "Audit Entries"
+            site.register_admin(AdminAuditEntry, AdminAuditEntryAdmin(model=AdminAuditEntry))
+    except Exception:
+        pass
+
+    logger.debug("Registered built-in admin models (ContentType, Permission, Group, User, LogEntry, Session, AuditEntry)")
 
 
 def flush_pending_registrations() -> int:
