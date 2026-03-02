@@ -358,6 +358,32 @@ def render_config_page(
 <body><div style="padding:24px"><h1>Configuration</h1><p>{len(config_files)} config files</p></div></body></html>"""
 
 
+def render_workspace_page(
+    workspace: Dict[str, Any],
+    app_list: Optional[List[Dict[str, Any]]] = None,
+    identity_name: str = "Admin",
+    *,
+    site_title: str = "Aquilia Admin",
+    url_prefix: str = "/admin",
+) -> str:
+    """Render the workspace monitoring page."""
+    if _HAS_JINJA2:
+        return _render_template(
+            "workspace.html",
+            workspace=workspace,
+            app_list=app_list or [],
+            active_page="workspace",
+            identity_name=identity_name,
+            site_title=site_title,
+            url_prefix=url_prefix,
+            page_title="Workspace",
+        )
+    mods = workspace.get("modules", [])
+    return f"""<!DOCTYPE html><html lang="en" data-theme="dark"><head>
+<meta charset="UTF-8"><title>Workspace — Aquilia Admin</title><style>{_FALLBACK_CSS}</style></head>
+<body><div style="padding:24px"><h1>Workspace</h1><p>{len(mods)} modules</p></div></body></html>"""
+
+
 def render_permissions_page(
     roles: List[Dict[str, Any]],
     all_permissions: List[str],

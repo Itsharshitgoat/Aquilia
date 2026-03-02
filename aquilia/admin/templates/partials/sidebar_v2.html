@@ -31,6 +31,9 @@
     {# ── System ── #}
     <div class="sidebar-section">
         <span class="sidebar-section-label">System</span>
+        <a class="sidebar-link{{ ' active' if active_page == 'workspace' else '' }}" href="{{ url_prefix|default('/admin') }}/workspace/">
+            <i class="icon-layout"></i> Workspace
+        </a>
         <a class="sidebar-link{{ ' active' if active_page == 'build' else '' }}" href="{{ url_prefix|default('/admin') }}/build/">
             <i class="icon-package"></i> Build
         </a>

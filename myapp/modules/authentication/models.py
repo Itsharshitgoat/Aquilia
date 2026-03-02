@@ -43,7 +43,7 @@ class Authentication(Model):
     updated_at = DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["-created_at"]
+        ordering = ["id"]
 
     def __repr__(self):
         return f"<Authentication id={self.id} name={self.name!r}>"

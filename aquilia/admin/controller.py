@@ -44,6 +44,7 @@ from .templates import (
     render_migrations_page,
     render_config_page,
     render_permissions_page,
+    render_workspace_page,
 )
 
 if TYPE_CHECKING:
@@ -840,6 +841,46 @@ class AdminController(Controller):
         html = render_config_page(
             config_files=config_data.get("files", []),
             workspace_info=config_data.get("workspace", None),
+            app_list=app_list,
+            identity_name=_get_identity_name(identity),
+        )
+        return _html_response(html)
+
+    # ── Workspace Page ───────────────────────────────────────────────
+
+    @GET("/workspace/")
+    async def workspace_view(self, request, ctx: RequestCtx) -> Response:
+        """Workspace page — monitor modules, manifests & project metadata."""
+        identity = _get_identity(ctx)
+        if identity is None:
+            return _redirect("/admin/login")
+
+        try:
+            require_admin_access(identity)
+        except AdminAuthorizationFault:
+            return _redirect("/admin/login")
+
+        if not self.site._initialized:
+            self.site.initialize()
+
+        workspace_data = self.site.get_workspace_data()
+        app_list = self.site.get_app_list(identity)
+
+        # Flatten: merge workspace sub-dict into top level for template
+        ws_info = workspace_data.pop("workspace", {})
+        workspace_data.update(ws_info)
+
+        # Ensure stats has all keys the template expects
+        stats = workspace_data.get("stats", {})
+        stats.setdefault("total_modules", 0)
+        stats.setdefault("total_models", 0)
+        stats.setdefault("total_controllers", 0)
+        stats.setdefault("total_services", 0)
+        stats.setdefault("total_integrations", 0)
+        workspace_data["stats"] = stats
+
+        html = render_workspace_page(
+            workspace=workspace_data,
             app_list=app_list,
             identity_name=_get_identity_name(identity),
         )

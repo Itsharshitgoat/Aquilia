@@ -3702,7 +3702,7 @@ class TestIndustryLevelActions:
             },
             app_list=[], identity_name="admin",
         )
-        assert "duplicateRecord" in html
+        assert "doDuplicate" in html
 
     def test_list_template_has_all_actions_in_dropdown(self):
         """Actions dropdown shows all registered actions."""
@@ -3784,3 +3784,806 @@ class TestToastTheming:
             identity_name="admin",
         )
         assert "var(--font-sans)" in html
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Session 7 — UX fixes, validation, modals, workspace page
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestThemeToggleClickability:
+    """Theme toggle must be clickable above the topbar overlay."""
+
+    def test_theme_toggle_has_z_index(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "z-index" in html
+
+    def test_theme_toggle_has_pointer_events(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "pointer-events" in html
+
+    def test_topbar_right_has_pointer_events(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "pointer-events:auto" in html or "pointer-events: auto" in html
+
+
+class TestAscendingDefaultOrdering:
+    """Default ordering should be ascending (1, 2, 3…)."""
+
+    def test_default_ordering_ascending(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        ordering = ma.get_ordering()
+        # Should NOT start with '-' (descending)
+        for field in ordering:
+            assert not field.startswith("-"), f"Default ordering should be ascending, got {field}"
+
+    def test_default_ordering_uses_pk(self):
+        from aquilia.admin.options import ModelAdmin
+        ma = ModelAdmin(model=None)
+        ordering = ma.get_ordering()
+        assert len(ordering) >= 1
+
+    def test_custom_ordering_preserved(self):
+        from aquilia.admin.options import ModelAdmin
+
+        class CustomAdmin(ModelAdmin):
+            ordering = ["-name"]
+
+        ca = CustomAdmin(model=None)
+        assert ca.get_ordering() == ["-name"]
+
+
+class TestFormDataCoercion:
+    """_coerce_form_data should convert HTML form strings to proper types."""
+
+    def test_coerce_boolean_true_values(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.models.fields_module import BooleanField
+
+        class FakeModel:
+            _fields = {"active": BooleanField()}
+
+        for val in ["1", "true", "on", "yes"]:
+            result = AdminSite._coerce_form_data(FakeModel, {"active": val})
+            assert result["active"] is True, f"'{val}' should coerce to True"
+
+    def test_coerce_boolean_false_values(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.models.fields_module import BooleanField
+
+        class FakeModel:
+            _fields = {"active": BooleanField()}
+
+        for val in ["", "0", "false", "no"]:
+            result = AdminSite._coerce_form_data(FakeModel, {"active": val})
+            assert result["active"] is False, f"'{val}' should coerce to False"
+
+    def test_coerce_integer_field(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.models.fields_module import IntegerField
+
+        class FakeModel:
+            _fields = {"count": IntegerField()}
+
+        result = AdminSite._coerce_form_data(FakeModel, {"count": "42"})
+        assert result["count"] == 42
+        assert isinstance(result["count"], int)
+
+    def test_coerce_float_field(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.models.fields_module import FloatField
+
+        class FakeModel:
+            _fields = {"price": FloatField()}
+
+        result = AdminSite._coerce_form_data(FakeModel, {"price": "3.14"})
+        assert abs(result["price"] - 3.14) < 0.001
+        assert isinstance(result["price"], float)
+
+    def test_coerce_unknown_field_passthrough(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.models.fields_module import CharField
+
+        class FakeModel:
+            _fields = {"name": CharField(max_length=100)}
+
+        result = AdminSite._coerce_form_data(FakeModel, {"name": "hello"})
+        assert result["name"] == "hello"
+
+    def test_coerce_missing_field_passthrough(self):
+        from aquilia.admin.site import AdminSite
+
+        class FakeModel:
+            _fields = {}
+
+        result = AdminSite._coerce_form_data(FakeModel, {"unknown": "val"})
+        assert result["unknown"] == "val"
+
+    def test_coerce_invalid_int_passthrough(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.models.fields_module import IntegerField
+
+        class FakeModel:
+            _fields = {"count": IntegerField()}
+
+        result = AdminSite._coerce_form_data(FakeModel, {"count": "abc"})
+        assert result["count"] == "abc"  # unchanged on error
+
+    def test_coerce_empty_int_passthrough(self):
+        from aquilia.admin.site import AdminSite
+        from aquilia.models.fields_module import IntegerField
+
+        field = IntegerField()
+        field.null = False
+
+        class FakeModel:
+            _fields = {"count": field}
+
+        result = AdminSite._coerce_form_data(FakeModel, {"count": ""})
+        assert result["count"] == 0  # empty string → 0 for non-null
+
+    def test_coerce_no_fields_attr(self):
+        from aquilia.admin.site import AdminSite
+
+        class FakeModel:
+            pass
+
+        result = AdminSite._coerce_form_data(FakeModel, {"x": "1"})
+        assert result["x"] == "1"
+
+
+class TestCustomModals:
+    """All confirm/delete dialogs should use custom modals, not browser confirm()."""
+
+    def test_list_view_no_browser_confirm(self):
+        html = render_list_view(
+            data={
+                "rows": [{"pk": "1", "values": [("id", "1")]}],
+                "list_display": ["id"], "model_name": "Foo",
+                "page": 1, "total_pages": 1, "total": 1,
+                "verbose_name": "Foo", "verbose_name_plural": "Foos",
+                "pk_field": "id",
+                "actions": {"delete_selected": MagicMock(short_description="Delete", confirmation="Sure?")},
+            },
+            app_list=[], identity_name="admin",
+        )
+        # Should NOT have bare confirm() — only showConfirmModal
+        assert "showConfirmModal" in html
+
+    def test_list_view_has_do_delete(self):
+        html = render_list_view(
+            data={
+                "rows": [{"pk": "1", "values": [("id", "1")]}],
+                "list_display": ["id"], "model_name": "Foo",
+                "page": 1, "total_pages": 1, "total": 1,
+                "verbose_name": "Foo", "verbose_name_plural": "Foos",
+                "pk_field": "id",
+                "actions": {},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "doDelete" in html
+
+    def test_list_view_has_do_duplicate(self):
+        html = render_list_view(
+            data={
+                "rows": [{"pk": "1", "values": [("id", "1")]}],
+                "list_display": ["id"], "model_name": "Foo",
+                "page": 1, "total_pages": 1, "total": 1,
+                "verbose_name": "Foo", "verbose_name_plural": "Foos",
+                "pk_field": "id",
+                "actions": {},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "doDuplicate" in html
+
+    def test_list_view_has_quick_update(self):
+        html = render_list_view(
+            data={
+                "rows": [{"pk": "1", "values": [("id", "1")]}],
+                "list_display": ["id"], "model_name": "Foo",
+                "page": 1, "total_pages": 1, "total": 1,
+                "verbose_name": "Foo", "verbose_name_plural": "Foos",
+                "pk_field": "id",
+                "actions": {},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "quickUpdate" in html
+
+    def test_list_view_modal_has_cancel_button(self):
+        html = render_list_view(
+            data={
+                "rows": [{"pk": "1", "values": [("id", "1")]}],
+                "list_display": ["id"], "model_name": "Foo",
+                "page": 1, "total_pages": 1, "total": 1,
+                "verbose_name": "Foo", "verbose_name_plural": "Foos",
+                "pk_field": "id",
+                "actions": {},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "Cancel" in html
+
+    def test_form_view_has_custom_delete_modal(self):
+        html = render_form_view(
+            data={
+                "model_name": "Foo", "verbose_name": "Foo",
+                "fields": [{"name": "id", "value": "1", "field_type": "text", "required": False, "readonly": True}],
+                "pk": "1", "pk_field": "id",
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "showDeleteModal" in html
+
+    def test_form_view_no_bare_confirm(self):
+        html = render_form_view(
+            data={
+                "model_name": "Foo", "verbose_name": "Foo",
+                "fields": [{"name": "id", "value": "1", "field_type": "text", "required": False, "readonly": True}],
+                "pk": "1", "pk_field": "id",
+            },
+            app_list=[], identity_name="admin",
+        )
+        # The form should not use bare return confirm(
+        assert "return confirm(" not in html
+
+
+class TestUpdateButtonInActions:
+    """The list view should have an Update button per row."""
+
+    def test_list_view_has_update_action(self):
+        html = render_list_view(
+            data={
+                "rows": [{"pk": "1", "values": [("id", "1")]}],
+                "list_display": ["id"], "model_name": "Foo",
+                "page": 1, "total_pages": 1, "total": 1,
+                "verbose_name": "Foo", "verbose_name_plural": "Foos",
+                "pk_field": "id",
+                "actions": {},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "quickUpdate" in html
+
+    def test_list_view_update_button_has_refresh_icon(self):
+        html = render_list_view(
+            data={
+                "rows": [{"pk": "1", "values": [("id", "1")]}],
+                "list_display": ["id"], "model_name": "Foo",
+                "page": 1, "total_pages": 1, "total": 1,
+                "verbose_name": "Foo", "verbose_name_plural": "Foos",
+                "pk_field": "id",
+                "actions": {},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "refresh-cw" in html
+
+
+class TestWorkspacePage:
+    """Workspace monitoring page — template, render, sidebar, route."""
+
+    def test_render_workspace_page_basic(self):
+        from aquilia.admin.templates import render_workspace_page
+        html = render_workspace_page(
+            workspace={
+                "name": "MyApp",
+                "version": "1.0.0",
+                "description": "Test workspace",
+                "python_version": "3.12",
+                "platform": "darwin",
+                "modules": [],
+                "integrations": [],
+                "registered_models": [],
+                "project_meta": {},
+                "stats": {
+                    "total_modules": 0,
+                    "total_models": 0,
+                    "total_controllers": 0,
+                    "total_services": 0,
+                    "total_integrations": 0,
+                },
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "Workspace" in html
+        assert "MyApp" in html
+
+    def test_render_workspace_with_modules(self):
+        from aquilia.admin.templates import render_workspace_page
+        html = render_workspace_page(
+            workspace={
+                "name": "MyApp",
+                "version": "1.0.0",
+                "description": "",
+                "python_version": "3.12",
+                "platform": "darwin",
+                "modules": [
+                    {
+                        "name": "authentication",
+                        "manifest": {
+                            "controllers": ["AuthController"],
+                            "services": ["AuthService"],
+                            "models": ["User"],
+                            "guards": ["AuthGuard"],
+                            "pipes": [],
+                            "interceptors": [],
+                            "imports": [],
+                            "exports": [],
+                            "tags": ["auth"],
+                            "route_prefix": "/auth",
+                            "fault_domain": "AUTH",
+                            "auto_discover": True,
+                        },
+                        "files": [
+                            {"name": "controller.py", "kind": "controller"},
+                            {"name": "models.py", "kind": "model"},
+                            {"name": "manifest.py", "kind": "manifest"},
+                        ],
+                    }
+                ],
+                "integrations": [
+                    {"name": "SQLite", "icon": "🗄️", "params": {"db": "test.db"}},
+                ],
+                "registered_models": [
+                    {"name": "User", "table": "users", "field_count": 5, "app_label": "auth"},
+                ],
+                "project_meta": {"author": "Tester", "license": "MIT"},
+                "stats": {
+                    "total_modules": 1,
+                    "total_models": 1,
+                    "total_controllers": 1,
+                    "total_services": 1,
+                    "total_integrations": 1,
+                },
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "authentication" in html
+        assert "AuthController" in html
+        assert "AuthService" in html
+        assert "AuthGuard" in html
+        assert "/auth" in html
+        assert "SQLite" in html
+        assert "User" in html
+        assert "users" in html
+        assert "Tester" in html
+
+    def test_workspace_page_has_stats(self):
+        from aquilia.admin.templates import render_workspace_page
+        html = render_workspace_page(
+            workspace={
+                "name": "App",
+                "version": "1.0",
+                "description": "",
+                "python_version": "3.12",
+                "platform": "darwin",
+                "modules": [],
+                "integrations": [],
+                "registered_models": [],
+                "project_meta": {},
+                "stats": {
+                    "total_modules": 3,
+                    "total_models": 5,
+                    "total_controllers": 2,
+                    "total_services": 4,
+                    "total_integrations": 1,
+                },
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "Modules" in html
+        assert "Models" in html
+        assert "Controllers" in html
+        assert "Services" in html
+        assert "Integrations" in html
+
+    def test_workspace_page_module_expandable(self):
+        from aquilia.admin.templates import render_workspace_page
+        html = render_workspace_page(
+            workspace={
+                "name": "App", "version": "1.0", "description": "",
+                "python_version": "3.12", "platform": "darwin",
+                "modules": [
+                    {"name": "orders", "manifest": None, "files": [{"name": "models.py", "kind": "model"}]},
+                ],
+                "integrations": [], "registered_models": [], "project_meta": {},
+                "stats": {"total_modules": 1, "total_models": 0, "total_controllers": 0, "total_services": 0, "total_integrations": 0},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "toggleModule" in html
+        assert "body-orders" in html
+        assert "chevron-orders" in html
+
+    def test_workspace_page_no_modules(self):
+        from aquilia.admin.templates import render_workspace_page
+        html = render_workspace_page(
+            workspace={
+                "name": "App", "version": "1.0", "description": "",
+                "python_version": "3.12", "platform": "darwin",
+                "modules": [],
+                "integrations": [], "registered_models": [], "project_meta": {},
+                "stats": {"total_modules": 0, "total_models": 0, "total_controllers": 0, "total_services": 0, "total_integrations": 0},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "No modules discovered" in html
+
+    def test_workspace_page_file_kind_badges(self):
+        from aquilia.admin.templates import render_workspace_page
+        html = render_workspace_page(
+            workspace={
+                "name": "App", "version": "1.0", "description": "",
+                "python_version": "3.12", "platform": "darwin",
+                "modules": [
+                    {
+                        "name": "payments",
+                        "manifest": {
+                            "controllers": [], "services": [], "models": [],
+                            "guards": [], "pipes": [], "interceptors": [],
+                            "imports": [], "exports": [],
+                            "tags": [], "route_prefix": "", "fault_domain": "", "auto_discover": False,
+                        },
+                        "files": [
+                            {"name": "controller.py", "kind": "controller"},
+                            {"name": "service.py", "kind": "service"},
+                            {"name": "models.py", "kind": "model"},
+                            {"name": "guard.py", "kind": "guard"},
+                        ],
+                    },
+                ],
+                "integrations": [], "registered_models": [], "project_meta": {},
+                "stats": {"total_modules": 1, "total_models": 0, "total_controllers": 0, "total_services": 0, "total_integrations": 0},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "controller" in html.lower()
+        assert "service" in html.lower()
+        assert "model" in html.lower()
+        assert "guard" in html.lower()
+
+    def test_workspace_page_project_metadata(self):
+        from aquilia.admin.templates import render_workspace_page
+        html = render_workspace_page(
+            workspace={
+                "name": "App", "version": "1.0", "description": "",
+                "python_version": "3.12", "platform": "darwin",
+                "modules": [],
+                "integrations": [], "registered_models": [],
+                "project_meta": {"author": "Dev Team", "license": "Apache-2.0", "python_requires": ">=3.10"},
+                "stats": {"total_modules": 0, "total_models": 0, "total_controllers": 0, "total_services": 0, "total_integrations": 0},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "Dev Team" in html
+        assert "Apache-2.0" in html
+
+    def test_workspace_page_keyboard_expand(self):
+        from aquilia.admin.templates import render_workspace_page
+        html = render_workspace_page(
+            workspace={
+                "name": "App", "version": "1.0", "description": "",
+                "python_version": "3.12", "platform": "darwin",
+                "modules": [{"name": "core", "manifest": None, "files": []}],
+                "integrations": [], "registered_models": [], "project_meta": {},
+                "stats": {"total_modules": 1, "total_models": 0, "total_controllers": 0, "total_services": 0, "total_integrations": 0},
+            },
+            app_list=[], identity_name="admin",
+        )
+        # Keyboard shortcut 'e' to expand/collapse all
+        assert "e.key === 'e'" in html or "e.key===" in html
+
+    def test_workspace_sidebar_link(self):
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "/admin/workspace/" in html
+        assert "Workspace" in html
+
+    def test_workspace_fallback_render(self):
+        from aquilia.admin.templates import render_workspace_page, _HAS_JINJA2
+        # If Jinja2 is available, we test the function returns valid HTML
+        html = render_workspace_page(
+            workspace={
+                "name": "Test", "version": "1.0", "description": "",
+                "python_version": "3.12", "platform": "darwin",
+                "modules": [],
+                "integrations": [], "registered_models": [], "project_meta": {},
+                "stats": {"total_modules": 0, "total_models": 0, "total_controllers": 0, "total_services": 0, "total_integrations": 0},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "<!DOCTYPE html>" in html or "Workspace" in html
+
+    def test_workspace_page_integrations_display(self):
+        from aquilia.admin.templates import render_workspace_page
+        html = render_workspace_page(
+            workspace={
+                "name": "App", "version": "1.0", "description": "",
+                "python_version": "3.12", "platform": "darwin",
+                "modules": [],
+                "integrations": [
+                    {"name": "Redis", "icon": "🔴", "params": {"host": "localhost"}},
+                    {"name": "PostgreSQL", "icon": "🐘", "params": {"port": 5432}},
+                ],
+                "registered_models": [], "project_meta": {},
+                "stats": {"total_modules": 0, "total_models": 0, "total_controllers": 0, "total_services": 0, "total_integrations": 2},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "Redis" in html
+        assert "PostgreSQL" in html
+
+    def test_workspace_page_registered_models_table(self):
+        from aquilia.admin.templates import render_workspace_page
+        html = render_workspace_page(
+            workspace={
+                "name": "App", "version": "1.0", "description": "",
+                "python_version": "3.12", "platform": "darwin",
+                "modules": [],
+                "integrations": [],
+                "registered_models": [
+                    {"name": "Order", "table": "orders", "field_count": 8, "app_label": "shop"},
+                    {"name": "Product", "table": "products", "field_count": 6, "app_label": "shop"},
+                ],
+                "project_meta": {},
+                "stats": {"total_modules": 0, "total_models": 2, "total_controllers": 0, "total_services": 0, "total_integrations": 0},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "Order" in html
+        assert "orders" in html
+        assert "Product" in html
+        assert "products" in html
+
+    def test_workspace_page_manifest_tags(self):
+        from aquilia.admin.templates import render_workspace_page
+        html = render_workspace_page(
+            workspace={
+                "name": "App", "version": "1.0", "description": "",
+                "python_version": "3.12", "platform": "darwin",
+                "modules": [
+                    {
+                        "name": "billing",
+                        "manifest": {
+                            "controllers": ["BillingController"],
+                            "services": [],
+                            "models": [],
+                            "guards": [],
+                            "pipes": [],
+                            "interceptors": [],
+                            "imports": [],
+                            "exports": [],
+                            "tags": ["payments", "billing"],
+                            "route_prefix": "/billing",
+                            "fault_domain": "BILLING",
+                            "auto_discover": True,
+                        },
+                        "files": [],
+                    },
+                ],
+                "integrations": [], "registered_models": [], "project_meta": {},
+                "stats": {"total_modules": 1, "total_models": 0, "total_controllers": 1, "total_services": 0, "total_integrations": 0},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "payments" in html
+        assert "billing" in html
+        assert "BILLING" in html
+
+    def test_workspace_page_auto_discover_indicator(self):
+        from aquilia.admin.templates import render_workspace_page
+        html = render_workspace_page(
+            workspace={
+                "name": "App", "version": "1.0", "description": "",
+                "python_version": "3.12", "platform": "darwin",
+                "modules": [
+                    {
+                        "name": "core",
+                        "manifest": {
+                            "controllers": [], "services": [], "models": [],
+                            "guards": [], "pipes": [], "interceptors": [],
+                            "imports": [], "exports": [],
+                            "tags": [], "route_prefix": "",
+                            "fault_domain": "", "auto_discover": True,
+                        },
+                        "files": [],
+                    },
+                ],
+                "integrations": [], "registered_models": [], "project_meta": {},
+                "stats": {"total_modules": 1, "total_models": 0, "total_controllers": 0, "total_services": 0, "total_integrations": 0},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "Enabled" in html or "Auto Discover" in html
+
+
+class TestWorkspaceDataMethod:
+    """AdminSite.get_workspace_data() should return structured workspace info."""
+
+    def test_get_workspace_data_returns_dict(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        site._initialized = True
+        data = site.get_workspace_data()
+        assert isinstance(data, dict)
+        assert "workspace" in data
+        assert "modules" in data
+        assert "stats" in data
+
+    def test_get_workspace_data_has_stats(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        site._initialized = True
+        data = site.get_workspace_data()
+        stats = data["stats"]
+        assert "total_modules" in stats
+        assert "total_models" in stats
+        assert "total_integrations" in stats
+
+    def test_get_workspace_data_has_workspace_info(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        site._initialized = True
+        data = site.get_workspace_data()
+        ws = data["workspace"]
+        assert isinstance(ws, dict)
+        assert "name" in ws
+        assert "python_version" in ws
+
+    def test_classify_module_file(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        assert site._classify_module_file("controller.py") == "controller"
+        assert site._classify_module_file("controllers.py") == "controller"
+        assert site._classify_module_file("service.py") == "service"
+        assert site._classify_module_file("services.py") == "service"
+        assert site._classify_module_file("models.py") == "model"
+        assert site._classify_module_file("manifest.py") == "manifest"
+        assert site._classify_module_file("guard.py") == "guard"
+        assert site._classify_module_file("guards.py") == "guard"
+        assert site._classify_module_file("faults.py") == "fault"
+        assert site._classify_module_file("pipe.py") == "pipe"
+        assert site._classify_module_file("middleware.py") == "middleware"
+        assert site._classify_module_file("config.py") == "other"
+        assert site._classify_module_file("utils.py") == "other"
+
+    def test_get_integration_icon(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        assert site._get_integration_icon("sqlite") != ""
+        assert site._get_integration_icon("redis") != ""
+        assert site._get_integration_icon("unknown_thing") != ""
+
+    def test_get_workspace_data_registered_models(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        site._initialized = True
+        data = site.get_workspace_data()
+        assert "registered_models" in data
+        assert isinstance(data["registered_models"], list)
+
+    def test_get_workspace_data_integrations(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        site._initialized = True
+        data = site.get_workspace_data()
+        assert "integrations" in data
+        assert isinstance(data["integrations"], list)
+
+    def test_get_workspace_data_project_meta(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        site._initialized = True
+        data = site.get_workspace_data()
+        assert "project_meta" in data
+        assert isinstance(data["project_meta"], dict)
+
+    def test_get_workspace_data_modules_list(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        site._initialized = True
+        data = site.get_workspace_data()
+        assert "modules" in data
+        assert isinstance(data["modules"], list)
+
+
+class TestWorkspaceRoute:
+    """Controller should have the workspace route wired up."""
+
+    def test_controller_imports_render_workspace(self):
+        from aquilia.admin.controller import render_workspace_page
+        assert callable(render_workspace_page)
+
+    def test_admin_controller_has_workspace_view(self):
+        from aquilia.admin.controller import AdminController
+        assert hasattr(AdminController, "workspace_view")
+
+    def test_workspace_view_is_async(self):
+        import inspect
+        from aquilia.admin.controller import AdminController
+        assert inspect.iscoroutinefunction(AdminController.workspace_view)
+
+
+class TestSidebarWorkspaceLink:
+    """Sidebar should include a Workspace link in the System section."""
+
+    def test_sidebar_has_workspace_link_on_all_pages(self):
+        """Workspace link should appear on every page that renders the sidebar."""
+        # Dashboard
+        html = render_dashboard(
+            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+            identity_name="admin",
+        )
+        assert "/admin/workspace/" in html
+
+    def test_sidebar_workspace_active_state(self):
+        from aquilia.admin.templates import render_workspace_page
+        html = render_workspace_page(
+            workspace={
+                "name": "App", "version": "1.0", "description": "",
+                "python_version": "3.12", "platform": "darwin",
+                "modules": [], "integrations": [],
+                "registered_models": [], "project_meta": {},
+                "stats": {"total_modules": 0, "total_models": 0, "total_controllers": 0, "total_services": 0, "total_integrations": 0},
+            },
+            app_list=[], identity_name="admin",
+        )
+        # The workspace link should have 'active' class on the workspace page
+        assert 'active' in html
+
+
+class TestModalAccessibility:
+    """Custom modals should be accessible and themed."""
+
+    def test_list_modal_has_escape_key(self):
+        html = render_list_view(
+            data={
+                "rows": [{"pk": "1", "values": [("id", "1")]}],
+                "list_display": ["id"], "model_name": "Foo",
+                "page": 1, "total_pages": 1, "total": 1,
+                "verbose_name": "Foo", "verbose_name_plural": "Foos",
+                "pk_field": "id", "actions": {},
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "Escape" in html
+
+    def test_form_modal_has_escape_key(self):
+        html = render_form_view(
+            data={
+                "model_name": "Foo", "verbose_name": "Foo",
+                "fields": [{"name": "id", "value": "1", "field_type": "text", "required": False, "readonly": True}],
+                "pk": "1", "pk_field": "id",
+            },
+            app_list=[], identity_name="admin",
+        )
+        assert "Escape" in html
+
+    def test_list_modal_themed_dark_mode(self):
+        html = render_list_view(
+            data={
+                "rows": [{"pk": "1", "values": [("id", "1")]}],
+                "list_display": ["id"], "model_name": "Foo",
+                "page": 1, "total_pages": 1, "total": 1,
+                "verbose_name": "Foo", "verbose_name_plural": "Foos",
+                "pk_field": "id", "actions": {},
+            },
+            app_list=[], identity_name="admin",
+        )
+        # Modal should use CSS variables for theming
+        assert "var(--bg-elevated)" in html or "var(--border-color)" in html

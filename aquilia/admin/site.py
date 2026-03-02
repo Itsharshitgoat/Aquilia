@@ -553,6 +553,265 @@ class AdminSite:
 
         return result
 
+    # ── Workspace data ───────────────────────────────────────────────
+
+    def get_workspace_data(self) -> Dict[str, Any]:
+        """
+        Gather comprehensive workspace data for the admin workspace page.
+
+        Reads workspace.py, discovers all modules and their manifests,
+        collects project metadata, registered models, integrations,
+        and overall project health/structure information.
+
+        Returns a dict with:
+            - workspace: name, version, description, path
+            - modules: list of module dicts with manifest data
+            - integrations: list of active integrations
+            - project_meta: pyproject.toml / setup.py data
+            - registered_models: list of all ORM models
+            - stats: module counts, model counts, etc.
+        """
+        import os
+        import sys
+        from pathlib import Path
+
+        result: Dict[str, Any] = {
+            "workspace": None,
+            "modules": [],
+            "integrations": [],
+            "project_meta": {},
+            "registered_models": [],
+            "stats": {},
+        }
+
+        # ── Read workspace.py ────────────────────────────────────────
+        ws_path = self._find_workspace_path("workspace.py", is_file=True)
+        workspace_root = None
+        if ws_path and ws_path.exists():
+            workspace_root = ws_path.parent
+            try:
+                ws_source = ws_path.read_text(encoding="utf-8")
+                import re
+
+                name_match = re.search(r'(?:Workspace\(\s*["\'](\w+)|name\s*=\s*["\'](\w+))', ws_source)
+                ws_name = (name_match.group(1) or name_match.group(2)) if name_match else "unknown"
+
+                ver_match = re.search(r'version\s*=\s*["\']([^"\']+)', ws_source)
+                ws_version = ver_match.group(1) if ver_match else "0.0.0"
+
+                desc_match = re.search(r'description\s*=\s*["\']([^"\']+)', ws_source)
+                ws_desc = desc_match.group(1) if desc_match else ""
+
+                # Extract integrations from workspace
+                intg_matches = re.findall(r'Integration\.(\w+)', ws_source)
+                integrations_list = []
+                seen = set()
+                for intg in intg_matches:
+                    if intg not in seen:
+                        seen.add(intg)
+                        # Extract inline params for the integration
+                        pattern = rf'Integration\.{intg}\((.*?)\)'
+                        param_match = re.search(pattern, ws_source, re.DOTALL)
+                        params = {}
+                        if param_match:
+                            param_str = param_match.group(1)
+                            for kv in re.findall(r'(\w+)\s*=\s*([^,\)]+)', param_str):
+                                params[kv[0]] = kv[1].strip().strip('"\'')
+                        integrations_list.append({
+                            "name": intg,
+                            "display_name": intg.replace("_", " ").title(),
+                            "params": params,
+                            "icon": self._get_integration_icon(intg),
+                        })
+
+                result["workspace"] = {
+                    "name": ws_name,
+                    "version": ws_version,
+                    "description": ws_desc,
+                    "path": str(workspace_root),
+                    "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                    "platform": sys.platform,
+                }
+                result["integrations"] = integrations_list
+
+            except Exception as exc:
+                logger.debug("Failed to read workspace.py: %s", exc)
+
+        # ── Discover modules ─────────────────────────────────────────
+        if workspace_root:
+            modules_dir = workspace_root / "modules"
+            if modules_dir.is_dir():
+                for module_path in sorted(modules_dir.iterdir()):
+                    if not module_path.is_dir() or module_path.name.startswith(("_", ".")):
+                        continue
+
+                    mod_info: Dict[str, Any] = {
+                        "name": module_path.name,
+                        "path": str(module_path.relative_to(workspace_root)),
+                        "has_manifest": False,
+                        "manifest": {},
+                        "files": [],
+                        "models": [],
+                        "controllers": [],
+                        "services": [],
+                    }
+
+                    # List all files in the module
+                    for f in sorted(module_path.iterdir()):
+                        if f.is_file() and f.suffix == ".py" and not f.name.startswith("_"):
+                            mod_info["files"].append({
+                                "name": f.name,
+                                "size": f.stat().st_size,
+                                "kind": self._classify_module_file(f.name),
+                            })
+                        elif f.name == "__init__.py":
+                            mod_info["files"].append({
+                                "name": f.name,
+                                "size": f.stat().st_size,
+                                "kind": "init",
+                            })
+
+                    # Read manifest.py
+                    manifest_path = module_path / "manifest.py"
+                    if manifest_path.exists():
+                        mod_info["has_manifest"] = True
+                        try:
+                            manifest_source = manifest_path.read_text(encoding="utf-8")
+                            import re as _re
+
+                            # Extract manifest fields
+                            name_m = _re.search(r'name\s*=\s*["\']([^"\']+)', manifest_source)
+                            ver_m = _re.search(r'version\s*=\s*["\']([^"\']+)', manifest_source)
+                            desc_m = _re.search(r'description\s*=\s*["\']([^"\']+)', manifest_source)
+                            prefix_m = _re.search(r'route_prefix\s*=\s*["\']([^"\']+)', manifest_source)
+                            base_m = _re.search(r'base_path\s*=\s*["\']([^"\']+)', manifest_source)
+
+                            # Extract component lists
+                            controllers = _re.findall(r'"modules\.[^"]+controllers[^"]*"', manifest_source)
+                            services = _re.findall(r'"modules\.[^"]+services[^"]*"', manifest_source)
+                            models = _re.findall(r'"modules\.[^"]+models[^"]*"', manifest_source)
+                            guards = _re.findall(r'"modules\.[^"]+guards[^"]*"', manifest_source)
+                            pipes = _re.findall(r'"modules\.[^"]+pipes[^"]*"', manifest_source)
+                            imports = _re.findall(r'imports\s*=\s*\[(.*?)\]', manifest_source, _re.DOTALL)
+                            exports = _re.findall(r'exports\s*=\s*\[(.*?)\]', manifest_source, _re.DOTALL)
+
+                            # Tags
+                            tags = _re.findall(r'tags\s*=\s*\[(.*?)\]', manifest_source, _re.DOTALL)
+                            tag_list = []
+                            if tags:
+                                tag_list = _re.findall(r'["\']([^"\']+)["\']', tags[0])
+
+                            # Auto-discover
+                            auto_disc = _re.search(r'auto_discover\s*=\s*(True|False)', manifest_source)
+
+                            # Fault handling
+                            fault_domain = _re.search(r'default_domain\s*=\s*["\']([^"\']+)', manifest_source)
+                            fault_strategy = _re.search(r'strategy\s*=\s*["\']([^"\']+)', manifest_source)
+
+                            mod_info["manifest"] = {
+                                "name": name_m.group(1) if name_m else module_path.name,
+                                "version": ver_m.group(1) if ver_m else "0.0.0",
+                                "description": desc_m.group(1) if desc_m else "",
+                                "route_prefix": prefix_m.group(1) if prefix_m else "",
+                                "base_path": base_m.group(1) if base_m else "",
+                                "controllers": [c.strip('"') for c in controllers],
+                                "services": [s.strip('"') for s in services],
+                                "models": [m.strip('"') for m in models],
+                                "guards": [g.strip('"') for g in guards],
+                                "pipes": [p.strip('"') for p in pipes],
+                                "tags": tag_list,
+                                "auto_discover": auto_disc.group(1) == "True" if auto_disc else True,
+                                "fault_domain": fault_domain.group(1) if fault_domain else "",
+                                "fault_strategy": fault_strategy.group(1) if fault_strategy else "",
+                                "source": manifest_source,
+                            }
+                            mod_info["controllers"] = [c.split(":")[-1].strip('"') for c in controllers]
+                            mod_info["services"] = [s.split(":")[-1].strip('"') for s in services]
+                            mod_info["models"] = [m.split(":")[-1].strip('"') for m in models]
+
+                        except Exception as exc:
+                            logger.debug("Failed to read manifest %s: %s", manifest_path, exc)
+
+                    result["modules"].append(mod_info)
+
+        # ── Project metadata (pyproject.toml) ────────────────────────
+        if workspace_root:
+            pyproject = workspace_root / "pyproject.toml"
+            if not pyproject.exists():
+                # Try one directory up (framework root)
+                pyproject = workspace_root.parent / "pyproject.toml"
+
+            if pyproject.exists():
+                try:
+                    content = pyproject.read_text(encoding="utf-8")
+                    import re as _re
+                    name_m = _re.search(r'name\s*=\s*"([^"]+)"', content)
+                    ver_m = _re.search(r'version\s*=\s*"([^"]+)"', content)
+                    desc_m = _re.search(r'description\s*=\s*"([^"]+)"', content)
+                    py_req = _re.search(r'requires-python\s*=\s*"([^"]+)"', content)
+                    license_m = _re.search(r'license\s*=\s*"([^"]+)"', content)
+
+                    result["project_meta"] = {
+                        "name": name_m.group(1) if name_m else "",
+                        "version": ver_m.group(1) if ver_m else "",
+                        "description": desc_m.group(1) if desc_m else "",
+                        "python_requires": py_req.group(1) if py_req else "",
+                        "license": license_m.group(1) if license_m else "",
+                    }
+                except Exception:
+                    pass
+
+        # ── Registered ORM models ────────────────────────────────────
+        for model_cls, admin in self._registry.items():
+            result["registered_models"].append({
+                "name": model_cls.__name__,
+                "table": getattr(model_cls, "table", ""),
+                "app_label": admin.get_app_label(),
+                "field_count": len(model_cls._fields) if hasattr(model_cls, "_fields") else 0,
+                "icon": admin.icon or "📦",
+            })
+
+        # ── Stats ────────────────────────────────────────────────────
+        result["stats"] = {
+            "total_modules": len(result["modules"]),
+            "total_models": len(result["registered_models"]),
+            "total_integrations": len(result["integrations"]),
+            "total_files": sum(len(m.get("files", [])) for m in result["modules"]),
+        }
+
+        return result
+
+    @staticmethod
+    def _classify_module_file(filename: str) -> str:
+        """Classify a Python file by its conventional name."""
+        name = filename.replace(".py", "")
+        mapping = {
+            "controllers": "controller", "controller": "controller",
+            "services": "service", "service": "service",
+            "models": "model", "model": "model",
+            "faults": "fault", "fault": "fault",
+            "guards": "guard", "guard": "guard",
+            "pipes": "pipe", "pipe": "pipe",
+            "interceptors": "interceptor", "interceptor": "interceptor",
+            "middleware": "middleware",
+            "manifest": "manifest",
+            "views": "view", "schemas": "schema", "serializers": "serializer",
+        }
+        return mapping.get(name, "other")
+
+    @staticmethod
+    def _get_integration_icon(name: str) -> str:
+        """Get an icon for an integration type."""
+        icons = {
+            "di": "🔌", "registry": "📋", "routing": "🔀",
+            "fault_handling": "🛡️", "patterns": "🧩",
+            "database": "🗄️", "cache": "⚡", "templates": "📄",
+            "static_files": "📁", "admin": "👤", "cors": "🌐",
+            "csp": "🔒", "rate_limit": "⏱️", "mail": "📧",
+            "sessions": "🔑",
+        }
+        return icons.get(name, "⚙️")
+
     # ── Permissions data ─────────────────────────────────────────────
 
     def get_permissions_data(self, identity: Optional["Identity"] = None) -> Dict[str, Any]:
@@ -959,6 +1218,71 @@ class AdminSite:
 
     # ── CRUD operations ──────────────────────────────────────────────
 
+    @staticmethod
+    def _coerce_form_data(model_cls: type, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Coerce form string values to the correct Python types for ORM fields.
+
+        HTML forms submit everything as strings. This converts:
+        - BooleanField: "1", "true", "on" → True; "", "0", "false" → False
+        - IntegerField/BigIntegerField/SmallIntegerField: "42" → 42
+        - FloatField/DecimalField: "3.14" → 3.14
+        - DateTimeField: kept as string (ORM handles parsing)
+        - JSON values: attempted parse
+
+        Prevents: "Field 'active': Expected boolean, got str"
+        """
+        if not hasattr(model_cls, '_fields'):
+            return data
+
+        from aquilia.models.fields_module import (
+            BooleanField, IntegerField, BigIntegerField, SmallIntegerField,
+            FloatField, DecimalField, PositiveIntegerField, PositiveSmallIntegerField,
+        )
+
+        coerced = {}
+        for field_name, value in data.items():
+            if field_name not in model_cls._fields:
+                coerced[field_name] = value
+                continue
+
+            field = model_cls._fields[field_name]
+
+            if isinstance(field, BooleanField):
+                if isinstance(value, str):
+                    coerced[field_name] = value.lower() in ("1", "true", "on", "yes")
+                elif isinstance(value, (int, float)):
+                    coerced[field_name] = bool(value)
+                else:
+                    coerced[field_name] = bool(value)
+            elif isinstance(field, (IntegerField, BigIntegerField, SmallIntegerField,
+                                     PositiveIntegerField, PositiveSmallIntegerField)):
+                if isinstance(value, str):
+                    if value.strip() == "":
+                        coerced[field_name] = None if field.null else 0
+                    else:
+                        try:
+                            coerced[field_name] = int(value)
+                        except (ValueError, TypeError):
+                            coerced[field_name] = value
+                else:
+                    coerced[field_name] = value
+            elif isinstance(field, (FloatField, DecimalField)):
+                if isinstance(value, str):
+                    if value.strip() == "":
+                        coerced[field_name] = None if field.null else 0.0
+                    else:
+                        try:
+                            coerced[field_name] = float(value)
+                        except (ValueError, TypeError):
+                            coerced[field_name] = value
+                else:
+                    coerced[field_name] = value
+            else:
+                coerced[field_name] = value
+
+        return coerced
+
     async def list_records(
         self,
         model_name: str,
@@ -1139,6 +1463,9 @@ class AdminSite:
         editable = set(admin.get_fields()) - set(admin.get_readonly_fields())
         clean_data = {k: v for k, v in data.items() if k in editable}
 
+        # Coerce string values from HTML forms to correct Python types
+        clean_data = self._coerce_form_data(model_cls, clean_data)
+
         try:
             record = await model_cls.create(**clean_data)
         except Exception as e:
@@ -1194,10 +1521,14 @@ class AdminSite:
 
         # Filter to editable fields and track changes
         editable = set(admin.get_fields()) - set(admin.get_readonly_fields())
+
+        # Coerce string values from HTML forms to correct Python types
+        coerced_data = self._coerce_form_data(model_cls, data)
+
         changes: Dict[str, Dict[str, Any]] = {}
         update_data: Dict[str, Any] = {}
 
-        for field_name, new_value in data.items():
+        for field_name, new_value in coerced_data.items():
             if field_name not in editable:
                 continue
             old_value = getattr(record, field_name, None)

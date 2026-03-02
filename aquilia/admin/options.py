@@ -360,9 +360,9 @@ class ModelAdmin:
             if meta_ordering:
                 return list(meta_ordering)
 
-        # Default: order by PK descending
+        # Default: order by PK ascending (1, 2, 3, ...)
         pk = getattr(self.model, "_pk_attr", "id") if self.model else "id"
-        return [f"-{pk}"]
+        return [pk]
 
     def get_model_name(self) -> str:
         """Get human-readable model name."""

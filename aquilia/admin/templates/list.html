@@ -90,17 +90,18 @@
                     {% endif %}
                 {% endfor %}
                 <td style="white-space:nowrap;">
-                    <a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/{{ row.pk }}" class="btn btn-sm btn-ghost" title="View / Edit">
+                    <a href="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/{{ row.pk }}" class="btn btn-sm btn-ghost" title="Edit">
                         <i class="icon-edit-3" style="font-size:13px;"></i>
                     </a>
-                    <button type="button" class="btn btn-sm btn-ghost" title="Duplicate" onclick="duplicateRecord('{{ row.pk }}')">
+                    <button type="button" class="btn btn-sm btn-ghost" title="Update" onclick="quickUpdate('{{ row.pk }}')">
+                        <i class="icon-refresh-cw" style="font-size:13px;"></i>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-ghost" title="Duplicate" onclick="showConfirmModal('Duplicate record #{{ row.pk }}?', 'This will create an exact copy of this record.', function(){ doDuplicate('{{ row.pk }}'); })">
                         <i class="icon-copy" style="font-size:13px;"></i>
                     </button>
-                    <form method="POST" action="{{ url_prefix|default('/admin') }}/{{ model_name|lower }}/{{ row.pk }}/delete" style="display:inline;" onsubmit="return confirm('Delete record #{{ row.pk }}? This cannot be undone.');">
-                        <button type="submit" class="btn btn-sm btn-ghost" title="Delete" style="color:var(--danger);">
-                            <i class="icon-trash-2" style="font-size:13px;"></i>
-                        </button>
-                    </form>
+                    <button type="button" class="btn btn-sm btn-ghost" title="Delete" style="color:var(--danger);" onclick="showConfirmModal('Delete record #{{ row.pk }}?', 'This action cannot be undone. The record will be permanently removed.', function(){ doDelete('{{ row.pk }}'); }, true)">
+                        <i class="icon-trash-2" style="font-size:13px;"></i>
+                    </button>
                 </td>
             </tr>
         {% else %}
@@ -189,10 +190,16 @@ function toggleAll(source) {
 
 function confirmBulkAction() {
     var sel = document.querySelector('#bulkActionForm select[name="action"]');
-    if (!sel.value) { alert('Please select an action first.'); return false; }
+    if (!sel.value) { showToast('Please select an action first.', 'warning'); return false; }
     var count = document.querySelectorAll('.row-check:checked').length;
-    if (!count) { alert('No records selected.'); return false; }
-    return confirm('Execute "' + sel.options[sel.selectedIndex].text + '" on ' + count + ' record(s)?');
+    if (!count) { showToast('No records selected.', 'warning'); return false; }
+    var actionLabel = sel.options[sel.selectedIndex].text;
+    showConfirmModal(
+        'Execute "' + actionLabel + '"?',
+        'This action will be applied to ' + count + ' selected record(s).',
+        function() { document.getElementById('bulkActionForm').submit(); }
+    );
+    return false;
 }
 
 // ── Export dropdown ─────────────────────────────────────────────────
@@ -231,9 +238,64 @@ document.addEventListener('keydown', function(e) {
     if (e.key === 'n') window.location.href = '{{ url_prefix|default("/admin") }}/{{ model_name|lower }}/add';
 });
 
-// ── Inline duplicate via bulk action ────────────────────────────────
-function duplicateRecord(pk) {
-    if (!confirm('Duplicate record #' + pk + '?')) return;
+// ── Custom Confirmation Modal (replaces browser confirm/alert) ──────
+function showConfirmModal(title, message, onConfirm, isDanger) {
+    var existing = document.getElementById('confirm-modal-overlay');
+    if (existing) existing.remove();
+
+    var isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+    var overlay = document.createElement('div');
+    overlay.id = 'confirm-modal-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:' + (isDark ? 'rgba(0,0,0,0.65)' : 'rgba(0,0,0,0.35)') + ';z-index:10003;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);animation:fadeIn 0.15s ease;';
+
+    var box = document.createElement('div');
+    box.style.cssText = 'background:' + (isDark ? 'var(--bg-elevated)' : '#fff') + ';border:1px solid var(--border-color);border-radius:14px;padding:28px 32px;max-width:420px;width:90%;box-shadow:0 24px 64px rgba(0,0,0,0.4);animation:scaleIn 0.15s ease;';
+
+    var iconColor = isDanger ? 'var(--danger)' : 'var(--accent)';
+    var iconName = isDanger ? 'alert-triangle' : 'help-circle';
+
+    box.innerHTML =
+        '<div style="display:flex;align-items:flex-start;gap:14px;">' +
+            '<div style="width:40px;height:40px;border-radius:10px;background:' + (isDanger ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)') + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+                '<i class="icon-' + iconName + '" style="font-size:20px;color:' + iconColor + ';"></i>' +
+            '</div>' +
+            '<div style="flex:1;">' +
+                '<h3 style="margin:0 0 6px;font-size:0.95rem;font-weight:600;color:var(--text-primary);">' + title + '</h3>' +
+                '<p style="margin:0;font-size:0.82rem;color:var(--text-secondary);line-height:1.5;">' + message + '</p>' +
+            '</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:24px;padding-top:18px;border-top:1px solid var(--border-subtle);">' +
+            '<button id="modal-cancel-btn" style="padding:8px 20px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-surface);color:var(--text-secondary);font-size:0.82rem;font-weight:500;cursor:pointer;font-family:var(--font-sans);transition:all 0.15s;">Cancel</button>' +
+            '<button id="modal-confirm-btn" style="padding:8px 20px;border-radius:8px;border:none;background:' + (isDanger ? 'var(--danger)' : 'var(--accent)') + ';color:' + (isDanger ? '#fff' : '#000') + ';font-size:0.82rem;font-weight:600;cursor:pointer;font-family:var(--font-sans);transition:all 0.15s;">Confirm</button>' +
+        '</div>';
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('#modal-cancel-btn').onclick = function() { overlay.remove(); };
+    overlay.querySelector('#modal-confirm-btn').onclick = function() {
+        overlay.remove();
+        if (onConfirm) onConfirm();
+    };
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+    document.addEventListener('keydown', function handler(e) {
+        if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', handler); }
+    });
+    // Focus confirm button for keyboard accessibility
+    overlay.querySelector('#modal-confirm-btn').focus();
+}
+
+// ── Delete via custom modal ─────────────────────────────────────────
+function doDelete(pk) {
+    var form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '{{ url_prefix|default("/admin") }}/{{ model_name|lower }}/' + pk + '/delete';
+    document.body.appendChild(form);
+    form.submit();
+}
+
+// ── Duplicate via custom modal ──────────────────────────────────────
+function doDuplicate(pk) {
     var form = document.createElement('form');
     form.method = 'POST';
     form.action = '{{ url_prefix|default("/admin") }}/{{ model_name|lower }}/action';
@@ -245,6 +307,11 @@ function duplicateRecord(pk) {
     form.appendChild(selectedInput);
     document.body.appendChild(form);
     form.submit();
+}
+
+// ── Quick Update (redirects to edit form) ───────────────────────────
+function quickUpdate(pk) {
+    window.location.href = '{{ url_prefix|default("/admin") }}/{{ model_name|lower }}/' + pk;
 }
 
 // ── Dropdown CSS injection ──────────────────────────────────────────

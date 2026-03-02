@@ -394,8 +394,10 @@ select.form-input { appearance: none; cursor: pointer; }
   border-radius: var(--radius-sm); background: var(--bg-surface);
   border: 1px solid var(--border-color); color: var(--text-muted);
   transition: all 0.15s var(--ease); font-size: 16px;
+  position: relative; z-index: 51; pointer-events: auto;
 }
 .theme-toggle:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+.topbar-right { position: relative; z-index: 51; pointer-events: auto; }
 
 /* ═══ LOGIN ═══════════════════════════════════════════════════ */
 .login-container {
