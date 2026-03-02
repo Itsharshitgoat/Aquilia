@@ -36,7 +36,7 @@
             {% if field_type == 'checkbox' %}
             <div class="form-group">
                 <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                    <input type="hidden" name="{{ name }}" value="">
+                    <input type="hidden" name="_checkbox_{{ name }}" value="1">
                     <input type="checkbox" name="{{ name }}" value="1"
                         {{ 'checked' if value else '' }}
                         {{ 'disabled' if readonly else '' }}

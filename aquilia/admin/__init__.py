@@ -95,6 +95,7 @@ from .faults import (
     AdminValidationFault,
     AdminActionFault,
 )
+from .di_providers import register_admin_providers
 
 __all__ = [
     # Core
@@ -140,4 +141,7 @@ __all__ = [
     "AdminRecordNotFoundFault",
     "AdminValidationFault",
     "AdminActionFault",
+    
+    # DI
+    "register_admin_providers",
 ]

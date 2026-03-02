@@ -1,10 +1,12 @@
 """
 AquilAdmin — Template Renderer.
 
-Renders admin HTML pages using Jinja2 templates from the
-``aquilia/admin/templates/`` directory.  Falls back to inline
-Python string templates when Jinja2 is not installed so that
-the admin module stays importable in minimal environments.
+Renders admin HTML pages using the Aquilia TemplateEngine from
+``aquilia/templates/``.  Templates live in ``aquilia/admin/templates/``.
+Falls back to a plain Jinja2 environment when the full TemplateEngine
+cannot be initialised, and to inline Python string templates when Jinja2
+is not installed at all — ensuring the admin module stays importable in
+minimal environments.
 
 Design system: matches aqdocx exactly.
 - Dark/light mode with Aquilia green accent (#22c55e / #16a34a)
@@ -20,34 +22,74 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# ── Jinja2 environment ──────────────────────────────────────────────────────
+# ── Template engine setup ────────────────────────────────────────────────────
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
-try:
-    from jinja2 import Environment, FileSystemLoader, select_autoescape
+# Try to use Aquilia's own TemplateEngine first, then fall back to raw Jinja2.
+_admin_engine = None
+_HAS_JINJA2 = False
+_jinja_env = None  # type: ignore[assignment]
 
-    _jinja_env = Environment(
-        loader=FileSystemLoader(str(_TEMPLATES_DIR)),
-        autoescape=select_autoescape(["html", "xml"]),
-        trim_blocks=True,
-        lstrip_blocks=True,
+try:
+    from aquilia.templates import TemplateEngine, TemplateLoader
+
+    _admin_loader = TemplateLoader(search_paths=[str(_TEMPLATES_DIR)])
+    _admin_engine = TemplateEngine(
+        _admin_loader,
+        sandbox=False,          # Admin templates are trusted first-party code
+        autoescape=True,
+        enable_async=False,     # Admin renders synchronously within event loop
     )
+    # Enable trim_blocks / lstrip_blocks on the underlying Jinja2 env so
+    # that admin templates render cleanly without extra whitespace.
+    _admin_engine.env.trim_blocks = True
+    _admin_engine.env.lstrip_blocks = True
     _HAS_JINJA2 = True
-except ImportError:
-    _jinja_env = None  # type: ignore[assignment]
-    _HAS_JINJA2 = False
+except Exception:
+    # Fallback: create a plain Jinja2 Environment (no TemplateEngine)
+    try:
+        from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+        _jinja_env = Environment(
+            loader=FileSystemLoader(str(_TEMPLATES_DIR)),
+            autoescape=select_autoescape(["html", "xml"]),
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+        _HAS_JINJA2 = True
+    except ImportError:
+        _jinja_env = None  # type: ignore[assignment]
+        _HAS_JINJA2 = False
 
 
 def _render_template(template_name: str, **ctx: Any) -> str:
-    """Render a Jinja2 template by name.  Raises if Jinja2 is unavailable."""
-    if _jinja_env is None:
-        raise RuntimeError(
-            "Jinja2 is required for admin templates.  "
-            "Install it with: pip install Jinja2"
-        )
-    tpl = _jinja_env.get_template(template_name)
-    return tpl.render(**ctx)
+    """Render a Jinja2 template by name.
+
+    Uses Aquilia TemplateEngine when available, plain Jinja2 otherwise.
+    Raises RuntimeError when neither is installed.
+    """
+    if _admin_engine is not None:
+        # Synchronous render via the framework engine
+        return _admin_engine.render_sync(template_name, ctx)
+    if _jinja_env is not None:
+        tpl = _jinja_env.get_template(template_name)
+        return tpl.render(**ctx)
+    raise RuntimeError(
+        "Jinja2 is required for admin templates.  "
+        "Install it with: pip install Jinja2"
+    )
+
+
+def _get_jinja_env():
+    """Return the active Jinja2 Environment.
+
+    Prefers the TemplateEngine's underlying env; falls back to the raw
+    _jinja_env.  Used by tests that need direct template access.
+    """
+    if _admin_engine is not None:
+        return _admin_engine.env
+    return _jinja_env
 
 
 # ── CSS Design System (kept in Python for backward compat imports) ───────

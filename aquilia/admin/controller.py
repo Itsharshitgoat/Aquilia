@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict, Optional, TYPE_CHECKING
-from urllib.parse import parse_qs
 
 from aquilia.controller.base import Controller, RequestCtx
 from aquilia.controller.decorators import GET, POST
@@ -32,7 +31,7 @@ from .permissions import (
     require_admin_access,
 )
 from .audit import AdminAction
-from .faults import AdminAuthenticationFault, AdminAuthorizationFault
+from .faults import AdminAuthorizationFault
 from .templates import (
     render_login_page,
     render_dashboard,
@@ -51,6 +50,9 @@ if TYPE_CHECKING:
     from aquilia.auth.core import Identity
 
 logger = logging.getLogger("aquilia.admin.controller")
+
+
+# ── Shared helpers ───────────────────────────────────────────────────
 
 
 def _extract_request_meta(request) -> dict:
@@ -97,7 +99,13 @@ def _redirect(url: str) -> Response:
 
 
 def _get_identity(ctx: RequestCtx) -> Optional[Identity]:
-    """Extract admin identity from session."""
+    """
+    Extract admin identity from session or request context.
+
+    Resolution order:
+    1. Session-stored admin identity (``_admin_identity`` key)
+    2. ``ctx.identity`` (populated by auth middleware / guards)
+    """
     if ctx.session and hasattr(ctx.session, "data"):
         admin_data = ctx.session.data.get("_admin_identity")
         if admin_data:
@@ -117,6 +125,54 @@ def _get_identity_name(identity: Optional[Identity]) -> str:
     if identity is None:
         return "Anonymous"
     return identity.get_attribute("name", identity.get_attribute("username", identity.id))
+
+
+def _require_identity(ctx: RequestCtx) -> tuple:
+    """
+    Extract and verify admin identity from request context.
+
+    Combines the recurring pattern of:
+    1. ``_get_identity(ctx)``
+    2. ``require_admin_access(identity)``
+    3. Redirect to ``/admin/login`` on failure
+
+    Returns:
+        ``(identity, None)`` on success — caller uses ``identity``.
+        ``(None, redirect_response)`` on failure — caller returns the response.
+    """
+    identity = _get_identity(ctx)
+    if identity is None:
+        return None, _redirect("/admin/login")
+    try:
+        require_admin_access(identity)
+    except AdminAuthorizationFault:
+        return None, _redirect("/admin/login")
+    return identity, None
+
+
+async def _parse_form(ctx: RequestCtx, *, multi: bool = False) -> Dict[str, Any]:
+    """
+    Parse form data from request context into a plain dict.
+
+    Handles the ``FormData.fields.to_dict()`` pattern that repeats
+    across all POST handlers.
+
+    Args:
+        ctx: Request context
+        multi: If True, keep multi-value lists (for bulk actions)
+
+    Returns:
+        Plain dict of field name → value
+    """
+    try:
+        raw_form = await ctx.form()
+        if hasattr(raw_form, 'fields'):
+            return raw_form.fields.to_dict(multi=multi)
+        if isinstance(raw_form, dict):
+            return dict(raw_form)
+        return {}
+    except Exception:
+        return {}
 
 
 class AdminController(Controller):
@@ -146,23 +202,21 @@ class AdminController(Controller):
     def __init__(self, site: Optional[AdminSite] = None):
         self.site = site or AdminSite.default()
 
+    def _ensure_initialized(self) -> None:
+        """Ensure the admin site has been initialized (lazy init)."""
+        if not self.site._initialized:
+            self.site.initialize()
+
     # ── Dashboard ────────────────────────────────────────────────────
 
     @GET("/")
     async def dashboard(self, request, ctx: RequestCtx) -> Response:
         """Admin dashboard — model overview with stats."""
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
-
-        # Ensure site is initialized
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         app_list = self.site.get_app_list(identity)
         stats = await self.site.get_dashboard_stats()
@@ -194,11 +248,7 @@ class AdminController(Controller):
         Validates credentials against auth system and creates
         an admin session.
         """
-        try:
-            raw_form = await ctx.form()
-            form_data = raw_form.fields.to_dict() if hasattr(raw_form, 'fields') else (dict(raw_form) if isinstance(raw_form, dict) else {})
-        except Exception:
-            form_data = {}
+        form_data = await _parse_form(ctx)
 
         username = form_data.get("username", "")
         password = form_data.get("password", "")
@@ -307,17 +357,11 @@ class AdminController(Controller):
             if handler:
                 return await handler(request, ctx)
 
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
-
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         # Check for flash message
         flash = ""
@@ -397,17 +441,11 @@ class AdminController(Controller):
     async def add_form(self, request, ctx: RequestCtx) -> Response:
         """Render the add/create form for a model."""
         model = request.state.get("path_params", {}).get("model", "")
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
-
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         try:
             model_cls = self.site.get_model_class(model)
@@ -446,24 +484,13 @@ class AdminController(Controller):
     async def add_submit(self, request, ctx: RequestCtx) -> Response:
         """Process create form submission."""
         model = request.state.get("path_params", {}).get("model", "")
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
+        self._ensure_initialized()
 
-        if not self.site._initialized:
-            self.site.initialize()
-
-        try:
-            raw_form = await ctx.form()
-            # FormData -> dict (FormData has .get() but no .items())
-            form_data = raw_form.fields.to_dict() if hasattr(raw_form, 'fields') else (dict(raw_form) if isinstance(raw_form, dict) else {})
-        except Exception:
-            form_data = {}
+        form_data = await _parse_form(ctx)
 
         try:
             record = await self.site.create_record(model, form_data, identity=identity)
@@ -510,17 +537,11 @@ class AdminController(Controller):
         _pp = request.state.get("path_params", {})
         model = _pp.get("model", "")
         pk = _pp.get("pk", "")
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
-
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         try:
             data = await self.site.get_record(model, pk, identity=identity)
@@ -555,24 +576,13 @@ class AdminController(Controller):
         _pp = request.state.get("path_params", {})
         model = _pp.get("model", "")
         pk = _pp.get("pk", "")
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
+        self._ensure_initialized()
 
-        if not self.site._initialized:
-            self.site.initialize()
-
-        try:
-            raw_form = await ctx.form()
-            # FormData -> dict (FormData has .get() but no .items())
-            form_data = raw_form.fields.to_dict() if hasattr(raw_form, 'fields') else (dict(raw_form) if isinstance(raw_form, dict) else {})
-        except Exception:
-            form_data = {}
+        form_data = await _parse_form(ctx)
 
         try:
             await self.site.update_record(model, pk, form_data, identity=identity)
@@ -603,17 +613,11 @@ class AdminController(Controller):
         _pp = request.state.get("path_params", {})
         model = _pp.get("model", "")
         pk = _pp.get("pk", "")
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
-
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         try:
             await self.site.delete_record(model, pk, identity=identity)
@@ -641,23 +645,13 @@ class AdminController(Controller):
     async def bulk_action(self, request, ctx: RequestCtx) -> Response:
         """Execute a bulk action on selected records."""
         model = request.state.get("path_params", {}).get("model", "")
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
+        self._ensure_initialized()
 
-        if not self.site._initialized:
-            self.site.initialize()
-
-        try:
-            raw_form = await ctx.form()
-            form_data = raw_form.fields.to_dict(multi=True) if hasattr(raw_form, 'fields') else {}
-        except Exception:
-            form_data = {}
+        form_data = await _parse_form(ctx, multi=True)
 
         action_name = form_data.get("action", "") if isinstance(form_data.get("action"), str) else (form_data.get("action", [""])[0] if isinstance(form_data.get("action"), list) else "")
         selected_raw = form_data.get("selected", [])
@@ -701,17 +695,11 @@ class AdminController(Controller):
     async def export_view(self, request, ctx: RequestCtx) -> Response:
         """Export model data as CSV or JSON."""
         model = request.state.get("path_params", {}).get("model", "")
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
-
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         fmt = ctx.query_param("format", "csv")
 
@@ -775,17 +763,11 @@ class AdminController(Controller):
     @GET("/orm/")
     async def orm_view(self, request, ctx: RequestCtx) -> Response:
         """ORM models overview — all registered models with counts."""
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
-
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         app_list = self.site.get_app_list(identity)
         stats = await self.site.get_dashboard_stats()
@@ -802,17 +784,11 @@ class AdminController(Controller):
     @GET("/build/")
     async def build_view(self, request, ctx: RequestCtx) -> Response:
         """Build page — Crous artifacts and pipeline status."""
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
-
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         build_data = self.site.get_build_info()
         app_list = self.site.get_app_list(identity)
@@ -833,17 +809,11 @@ class AdminController(Controller):
     @GET("/migrations/")
     async def migrations_view(self, request, ctx: RequestCtx) -> Response:
         """Migrations page — list all migrations with syntax-highlighted source."""
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
-
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         migrations = self.site.get_migrations_data()
         app_list = self.site.get_app_list(identity)
@@ -860,17 +830,11 @@ class AdminController(Controller):
     @GET("/config/")
     async def config_view(self, request, ctx: RequestCtx) -> Response:
         """Configuration page — show workspace YAML configuration."""
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
-
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         config_data = self.site.get_config_data()
         app_list = self.site.get_app_list(identity)
@@ -888,17 +852,11 @@ class AdminController(Controller):
     @GET("/workspace/")
     async def workspace_view(self, request, ctx: RequestCtx) -> Response:
         """Workspace page — monitor modules, manifests & project metadata."""
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
-
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         workspace_data = self.site.get_workspace_data()
         app_list = self.site.get_app_list(identity)
@@ -928,17 +886,11 @@ class AdminController(Controller):
     @GET("/permissions/")
     async def permissions_view(self, request, ctx: RequestCtx) -> Response:
         """Permissions page — role matrix and per-model access."""
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
-        try:
-            require_admin_access(identity)
-        except AdminAuthorizationFault:
-            return _redirect("/admin/login")
-
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         # Check for flash message from permissions update
         flash = ""
@@ -964,27 +916,20 @@ class AdminController(Controller):
     @POST("/permissions/update")
     async def permissions_update(self, request, ctx: RequestCtx) -> Response:
         """Handle permission updates from the permissions page form."""
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
         # Only superadmins can modify permissions
         role = get_admin_role(identity)
-        if role is None:
-            if ctx.session and hasattr(ctx.session, "data"):
-                ctx.session.data["_admin_flash"] = "Only superadmins can modify permissions."
-                ctx.session.data["_admin_flash_type"] = "error"
-            return _redirect("/admin/permissions/")
-
         from .permissions import AdminRole as _AR
-        if role != _AR.SUPERADMIN:
+        if role is None or role != _AR.SUPERADMIN:
             if ctx.session and hasattr(ctx.session, "data"):
                 ctx.session.data["_admin_flash"] = "Only superadmins can modify permissions."
                 ctx.session.data["_admin_flash_type"] = "error"
             return _redirect("/admin/permissions/")
 
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         # Parse form data
         try:
@@ -1012,15 +957,14 @@ class AdminController(Controller):
     @GET("/audit/")
     async def audit_view(self, request, ctx: RequestCtx) -> Response:
         """View the admin audit log — reads from DB if available."""
-        identity = _get_identity(ctx)
-        if identity is None:
-            return _redirect("/admin/login")
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
 
         if not has_admin_permission(identity, AdminPermission.AUDIT_VIEW):
             return _redirect("/admin/")
 
-        if not self.site._initialized:
-            self.site.initialize()
+        self._ensure_initialized()
 
         # Use async DB-backed query so persisted entries survive restarts
         audit = self.site.audit_log

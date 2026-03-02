@@ -3277,8 +3277,8 @@ class TestGridBackground:
     """Verify grid background pattern is in CSS."""
 
     def test_css_has_grid_linear_gradient(self):
-        from aquilia.admin.templates import _jinja_env
-        tpl = _jinja_env.get_template("partials/css.html")
+        from aquilia.admin.templates import _get_jinja_env
+        tpl = _get_jinja_env().get_template("partials/css.html")
         css = tpl.render()
         # Grid lines + ambient blob divs (aqdocx style)
         assert "linear-gradient" in css
@@ -3287,23 +3287,23 @@ class TestGridBackground:
         assert "breathing" in css  # blob animation
 
     def test_css_has_dark_grid_color(self):
-        from aquilia.admin.templates import _jinja_env
-        tpl = _jinja_env.get_template("partials/css.html")
+        from aquilia.admin.templates import _get_jinja_env
+        tpl = _get_jinja_env().get_template("partials/css.html")
         css = tpl.render()
         # Dark theme uses rgba borders and pure black background
         assert "#000000" in css
         assert "rgba(255,255,255,0.08)" in css
 
     def test_css_has_light_grid_color(self):
-        from aquilia.admin.templates import _jinja_env
-        tpl = _jinja_env.get_template("partials/css.html")
+        from aquilia.admin.templates import _get_jinja_env
+        tpl = _get_jinja_env().get_template("partials/css.html")
         css = tpl.render()
         # Light theme uses visible border color
         assert "#e4e4e7" in css
 
     def test_body_before_has_background_size(self):
-        from aquilia.admin.templates import _jinja_env
-        tpl = _jinja_env.get_template("partials/css.html")
+        from aquilia.admin.templates import _get_jinja_env
+        tpl = _get_jinja_env().get_template("partials/css.html")
         css = tpl.render()
         # Grid lines use background-size: 40px 40px
         assert "background-size" in css
@@ -4619,32 +4619,32 @@ class TestAqdocxThemeAlignment:
     """Verify admin CSS is aligned with aqdocx docs theme."""
 
     def test_css_uses_outfit_font(self):
-        from aquilia.admin.templates import _jinja_env
-        css = _jinja_env.get_template("partials/css.html").render()
+        from aquilia.admin.templates import _get_jinja_env
+        css = _get_jinja_env().get_template("partials/css.html").render()
         assert '"Outfit"' in css
 
     def test_css_uses_space_mono_font(self):
-        from aquilia.admin.templates import _jinja_env
-        css = _jinja_env.get_template("partials/css.html").render()
+        from aquilia.admin.templates import _get_jinja_env
+        css = _get_jinja_env().get_template("partials/css.html").render()
         assert '"Space Mono"' in css
 
     def test_css_pure_black_dark_mode(self):
-        from aquilia.admin.templates import _jinja_env
-        css = _jinja_env.get_template("partials/css.html").render()
+        from aquilia.admin.templates import _get_jinja_env
+        css = _get_jinja_env().get_template("partials/css.html").render()
         assert "--bg-body: #000000" in css
         assert "--bg-card: #000000" in css
         # aqdocx sidebar is #09090b (zinc-950), not pure black
         assert "--bg-sidebar: #09090b" in css
 
     def test_css_has_grid_background(self):
-        from aquilia.admin.templates import _jinja_env
-        css = _jinja_env.get_template("partials/css.html").render()
+        from aquilia.admin.templates import _get_jinja_env
+        css = _get_jinja_env().get_template("partials/css.html").render()
         assert "linear-gradient" in css
         assert "40px 40px" in css
 
     def test_css_has_ambient_blob_classes(self):
-        from aquilia.admin.templates import _jinja_env
-        css = _jinja_env.get_template("partials/css.html").render()
+        from aquilia.admin.templates import _get_jinja_env
+        css = _get_jinja_env().get_template("partials/css.html").render()
         assert "ambient-blob-green" in css
         assert "ambient-blob-blue" in css
         assert "ambient-blob-purple" in css
@@ -4659,13 +4659,13 @@ class TestAqdocxThemeAlignment:
         assert "ambient-blob-cyan" in html
 
     def test_css_has_breathing_animation(self):
-        from aquilia.admin.templates import _jinja_env
-        css = _jinja_env.get_template("partials/css.html").render()
+        from aquilia.admin.templates import _get_jinja_env
+        css = _get_jinja_env().get_template("partials/css.html").render()
         assert "@keyframes breathing" in css
 
     def test_css_sidebar_active_gradient(self):
-        from aquilia.admin.templates import _jinja_env
-        css = _jinja_env.get_template("partials/css.html").render()
+        from aquilia.admin.templates import _get_jinja_env
+        css = _get_jinja_env().get_template("partials/css.html").render()
         assert "linear-gradient(to right" in css
         assert "border-left: 2px solid #22c55e" in css
 

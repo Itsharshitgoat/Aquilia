@@ -1781,14 +1781,16 @@ def admin_check(ctx, fix: bool, as_json: bool):
     })
 
     # 5. Templates configured?
-    templates_active = "Integration.templates" in active_lines or "templates" in active_lines.lower()
+    templates_active = "Integration.templates" in active_lines or "TemplateEngine" in active_lines
     checks.append({
         "name": "Templates",
-        "status": "ok" if templates_active else "info",
+        "status": "ok" if templates_active else "warn",
         "detail": (
             "Template engine configured"
             if templates_active else
-            "Template engine not explicitly configured (admin uses built-in renderer)"
+            "Template engine not explicitly configured in workspace.py. "
+            "Admin uses its built-in TemplateEngine but user templates "
+            "won't resolve. Add: .integrate(Integration.templates(directories=['templates']))"
         ),
     })
 

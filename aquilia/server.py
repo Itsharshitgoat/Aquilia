@@ -1693,6 +1693,14 @@ class AquiliaServer:
             self.controller_router._initialized = False
             self.controller_router.initialize()
 
+            # ── Register admin DI providers ──────────────────────────────
+            try:
+                from .admin.di_providers import register_admin_providers
+                if hasattr(self, "container") and self.container is not None:
+                    register_admin_providers(self.container)
+            except Exception:
+                pass  # DI is optional
+
             # ── Validate admin prerequisites ─────────────────────────────
             # The admin controller REQUIRES sessions to store the login
             # identity.  Warn loudly if sessions are not configured.

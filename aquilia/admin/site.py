@@ -1241,6 +1241,13 @@ class AdminSite:
         - DateTimeField: kept as string (ORM handles parsing)
         - JSON values: attempted parse
 
+        Checkbox handling:
+        - The form template sends ``_checkbox_{name}=1`` as a sentinel marker
+          for every checkbox field.  When the checkbox is checked the browser
+          also sends ``{name}=1``.  When it is unchecked, the browser does NOT
+          send the ``{name}`` key at all.  We detect unchecked checkboxes by
+          looking for the sentinel marker and the absence of the value key.
+
         Prevents: "Field 'active': Expected boolean, got str"
         """
         if not hasattr(model_cls, '_fields'):
@@ -1251,8 +1258,22 @@ class AdminSite:
             FloatField, DecimalField, PositiveIntegerField, PositiveSmallIntegerField,
         )
 
+        # Detect checkbox sentinel markers (_checkbox_{name}) and inject
+        # False for unchecked checkboxes that the browser didn't send.
+        checkbox_sentinels = [
+            k[len("_checkbox_"):] for k in data if k.startswith("_checkbox_")
+        ]
+        for cb_name in checkbox_sentinels:
+            if cb_name not in data:
+                # Checkbox was rendered but NOT checked → explicitly False
+                data[cb_name] = False
+
         coerced = {}
         for field_name, value in data.items():
+            # Skip sentinel markers — they are not real model fields
+            if field_name.startswith("_checkbox_"):
+                continue
+
             if field_name not in model_cls._fields:
                 coerced[field_name] = value
                 continue
@@ -1260,7 +1281,9 @@ class AdminSite:
             field = model_cls._fields[field_name]
 
             if isinstance(field, BooleanField):
-                if isinstance(value, str):
+                if isinstance(value, bool):
+                    coerced[field_name] = value
+                elif isinstance(value, str):
                     coerced[field_name] = value.lower() in ("1", "true", "on", "yes")
                 elif isinstance(value, (int, float)):
                     coerced[field_name] = bool(value)
