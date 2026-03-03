@@ -367,7 +367,7 @@ class ModelBackedAuditLog:
         if await self._probe_db():
             try:
                 from aquilia.admin.models import AdminAuditEntry
-                qs = AdminAuditEntry.objects.all()
+                qs = AdminAuditEntry.objects.get_queryset()
                 if action is not None:
                     action_str = action.value if hasattr(action, "value") else str(action)
                     qs = qs.filter(action=action_str)
@@ -418,7 +418,7 @@ class ModelBackedAuditLog:
         if await self._probe_db():
             try:
                 from aquilia.admin.models import AdminAuditEntry
-                qs = AdminAuditEntry.objects.all()
+                qs = AdminAuditEntry.objects.get_queryset()
                 if action is not None:
                     action_str = action.value if hasattr(action, "value") else str(action)
                     qs = qs.filter(action=action_str)
