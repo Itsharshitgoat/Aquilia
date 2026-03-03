@@ -434,7 +434,7 @@ def register_mlops_providers(
         fault_engine.register_app("mlops", MLOpsFaultHandler())
         logger.info("  FaultEngine wired with MLOps handler")
     except Exception as exc:
-        logger.debug("  FaultEngine integration skipped: %s", exc)
+        pass
 
     # CacheService -- resolve from container if available
     cache_service = None
@@ -461,7 +461,7 @@ def register_mlops_providers(
             ))
             logger.info("  CacheService created (memory backend)")
     except Exception as exc:
-        logger.debug("  CacheService integration skipped: %s", exc)
+        pass
 
     # ArtifactStore -- for model artifact management
     artifact_store = None
@@ -475,7 +475,7 @@ def register_mlops_providers(
         ))
         logger.info("  ArtifactStore registered (%s)", cfg.artifact_store_dir)
     except Exception as exc:
-        logger.debug("  ArtifactStore integration skipped: %s", exc)
+        pass
 
     # MLOps Controller (with ecosystem services injected)
     controller = MLOpsController(

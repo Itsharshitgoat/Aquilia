@@ -63,7 +63,7 @@ def send_mail(
     **kwargs: Any,
 ) -> Optional[str]:
     """
-    Send an email synchronously (Django-compatible API).
+    Send an email synchronously.
 
     Returns:
         envelope_id on success, None if fail_silently.
@@ -290,11 +290,6 @@ class MailService:
         # Apply subject prefix
         if self.config.subject_prefix:
             envelope.subject = self.config.subject_prefix + envelope.subject
-
-        self.logger.debug(
-            f"Enqueued {envelope.id} → {envelope.all_recipients()} "
-            f"subj={envelope.subject!r}"
-        )
 
         # In preview mode, just log -- don't actually send
         if self.config.preview_mode:

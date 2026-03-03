@@ -1922,7 +1922,7 @@ class AdminController(Controller):
         """
         from aquilia.auth.core import Identity, IdentityType, IdentityStatus
 
-        # Try ORM-based AdminUser (preferred -- Django-like)
+        # Try ORM-based AdminUser (preferred)
         try:
             from aquilia.admin.models import AdminUser
             user = await AdminUser.authenticate(username, password)

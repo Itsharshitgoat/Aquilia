@@ -1,16 +1,15 @@
 """
 Aquilia Query Builder -- chainable, immutable, async-terminal Q object.
 
-Inspired by Django's QuerySet architecture -- every chain method returns
-a NEW Q instance (immutable cloning), and terminal methods (all, first,
-count, etc.) are async and execute the query.
+Every chain method returns a NEW Q instance (immutable cloning), and
+terminal methods (all, first, count, etc.) are async and execute the query.
 
-Unique Aquilia syntax differences from Django:
-    - .query()  starts a chain   (Django: .objects.all())
-    - .order()  for ordering     (Django: .order_by())
-    - .where()  for raw clauses  (Aquilia-only: raw parameterized WHERE)
-    - .one()    for strict get   (Aquilia-only: raises if != 1 result)
-    - .apply_q()  for QNode      (Aquilia-only: composable QNode objects)
+Key API:
+    - .query()    starts a chain
+    - .order()    for ordering
+    - .where()    raw parameterized WHERE clauses
+    - .one()      strict get -- raises if != 1 result
+    - .apply_q()  composable QNode filter objects
     - All terminal methods are async (await qs.all(), await qs.count())
 
 Usage:
@@ -56,8 +55,7 @@ class QNode:
     """
     Composable filter node for complex WHERE clauses.
 
-    Similar to Django's Q objects but named QNode to avoid confusion
-    with Aquilia's Q (QuerySet) class.
+    Named QNode to avoid confusion with Aquilia's Q (QuerySet) class.
 
     Usage:
         from aquilia.models.query import QNode as QF
@@ -140,7 +138,7 @@ class QNode:
 QCombination = QNode
 
 
-# ── Prefetch Object (Django-style custom prefetch) ───────────────────────────
+# ── Prefetch Object ──────────────────────────────────────────────────────────
 
 
 class Prefetch:
@@ -238,11 +236,11 @@ class Q:
     """
     Aquilia QuerySet -- chainable, immutable, async-terminal query builder.
 
-    Every chain method returns a NEW Q instance (Django-style immutability).
+    Every chain method returns a NEW Q instance (immutable cloning).
     Terminal methods (all, first, count, etc.) are async and execute SQL.
 
     Chain methods (return new Q):
-        filter(**kwargs)          -- Django-style field lookups
+        filter(**kwargs)          -- Field lookup filter
         exclude(**kwargs)         -- Negated filter
         where(clause, *args)     -- Raw parameterized WHERE (Aquilia-only)
         order(*fields)           -- ORDER BY ("-field" for DESC, "?" for RANDOM)
@@ -376,7 +374,7 @@ class Q:
 
     def filter(self, *q_nodes: Any, **kwargs: Any) -> Q:
         """
-        Django-style field lookup filter.
+        Field lookup filter.
 
         Supports all lookups: exact, gt, gte, lt, lte, ne, contains,
         icontains, startswith, endswith, in, isnull, range, regex, etc.
@@ -481,10 +479,10 @@ class Q:
                     new._order_clauses.append(sql)
         return new
 
-    # Django-style alias
+    # Alias
     order_by = order
 
-    # ── Set Operations (Django-style) ────────────────────────────────
+    # ── Set Operations ────────────────────────────────────────────────
 
     def union(self, *querysets: Q, all: bool = False) -> Q:
         """
@@ -612,7 +610,7 @@ class Q:
         """
         Eager-load FK/OneToOne relations via JOINs.
 
-        Like Django's select_related -- reduces N+1 queries for FK.
+        Reduces N+1 queries for FK relationships.
 
         Usage:
             orders = await Order.objects.select_related("user").all()
@@ -666,7 +664,7 @@ class Q:
 
     def using(self, db_alias: str) -> Q:
         """
-        Target a specific database for this query (Django-style).
+        Target a specific database for this query.
 
         Usage:
             users = await User.objects.using("replica").filter(active=True).all()
@@ -702,7 +700,7 @@ class Q:
 
     def none(self) -> Q:
         """
-        Return an empty queryset that evaluates to [] (Django-style).
+        Return an empty queryset that evaluates to [].
 
         Useful for conditional query building.
 
@@ -733,7 +731,7 @@ class Q:
 
     def __getitem__(self, key: Any) -> Q:
         """
-        Support Python slicing on querysets (Django-style).
+        Support Python slicing on querysets.
 
         Usage:
             top_5 = User.objects.order("-score")[:5]
@@ -1436,7 +1434,7 @@ class Q:
 
     async def create(self, **data: Any) -> Model:
         """
-        Create a new record (Django-style shortcut on queryset).
+        Create a new record (shortcut on queryset).
 
         Usage:
             user = await User.objects.filter(role="admin").create(
@@ -1449,7 +1447,7 @@ class Q:
         self, defaults: Optional[Dict[str, Any]] = None, **lookup: Any
     ) -> Tuple[Model, bool]:
         """
-        Get existing or create new (Django-style on queryset).
+        Get existing or create new.
 
         Returns (instance, created) tuple.
         """
@@ -1459,7 +1457,7 @@ class Q:
         self, defaults: Optional[Dict[str, Any]] = None, **lookup: Any
     ) -> Tuple[Model, bool]:
         """
-        Update existing or create new (Django-style on queryset).
+        Update existing or create new.
 
         Returns (instance, created) tuple.
         """
@@ -1522,7 +1520,7 @@ class Q:
     @property
     def query(self) -> str:
         """
-        Return the raw SQL that would be executed (Django-style introspection).
+        Return the raw SQL that would be executed.
 
         Usage:
             print(User.objects.filter(active=True).query)

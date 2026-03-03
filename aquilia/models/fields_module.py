@@ -1,5 +1,5 @@
 """
-Aquilia Model Fields -- Pure Python, Django-grade field system.
+Aquilia Model Fields -- Pure Python, production-grade field system.
 
 Every field is production-ready with full validation, SQL generation,
 and serialization. Aquilia fields use a unique descriptive API:
@@ -322,7 +322,7 @@ class AutoField(Field):
 
 
 class BigAutoField(Field):
-    """Auto-incrementing 64-bit integer primary key (Django 3.2+ default)."""
+    """Auto-incrementing 64-bit integer primary key."""
 
     _field_type = "BIGAUTO"
     _python_type = int
@@ -716,7 +716,7 @@ class CharField(Field):
         if not isinstance(value, str):
             value = str(value)
         # blank=True allows empty/whitespace-only strings;
-        # blank=False rejects them (like Django)
+        # blank=False rejects them
         if not value.strip() and not self.blank:
             raise FieldValidationError(self.name, "Cannot be blank")
         if len(value) > self.max_length:
@@ -2009,7 +2009,7 @@ class InetAddressField(GenericIPAddressField):
 
 class GeneratedField(Field):
     """
-    Database-computed generated field (Django 5+).
+    Database-computed generated field.
 
     The value is computed from an expression and stored (STORED)
     or computed on read (VIRTUAL).

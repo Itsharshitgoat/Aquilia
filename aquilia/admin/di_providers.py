@@ -109,12 +109,10 @@ def register_admin_providers(container: "Container") -> None:
             FactoryProvider(provide_model_backed_audit_log, scope=Scope.SINGLETON),
         )
 
-        logger.debug("Registered admin DI providers: AdminSite, AdminController, AdminAuditLog")
-
     except ImportError:
-        logger.debug("DI system not available -- skipping admin provider registration")
+        pass
     except Exception as exc:
-        logger.debug("Failed to register admin DI providers: %s", exc)
+        pass
 
 
 __all__ = [

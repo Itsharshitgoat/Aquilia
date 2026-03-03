@@ -263,7 +263,7 @@ class ModelpackBuilder:
                 model_artifact.digest,
             )
         except Exception as exc:
-            logger.debug("Skipped ModelArtifact creation: %s", exc)
+            pass
 
         return str(archive_path.resolve())
 

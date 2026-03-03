@@ -1,8 +1,7 @@
 """
 Aquilia Model Base -- Pure Python, metaclass-driven, async-first ORM.
 
-Inspired by Django's model architecture but with Aquilia's unique
-async-first, chainable query syntax.
+Async-first model architecture with chainable query syntax.
 
 Usage:
     from aquilia.models import Model
@@ -228,8 +227,7 @@ class Model(metaclass=ModelMeta):
     """
     Aquilia Model base class -- pure Python, async-first ORM.
 
-    Inspired by Django's Model class but with Aquilia's unique async-first
-    syntax and chainable query API.
+    Async-first syntax with chainable query API.
 
     Define models by subclassing and declaring fields:
 
@@ -246,7 +244,7 @@ class Model(metaclass=ModelMeta):
                 ordering = ["-created_at"]
                 get_latest_by = "created_at"
 
-    API -- Django-style via objects Manager:
+    API -- via objects Manager:
         user  = await User.objects.create(name="Alice", email="alice@test.com")
         user  = await User.objects.get(pk=1)
         users = await User.objects.filter(active=True).order("-created_at").all()
@@ -320,11 +318,11 @@ class Model(metaclass=ModelMeta):
     def __hash__(self) -> int:
         return hash((self.__class__.__name__, getattr(self, self._pk_attr, None)))
 
-    # ── pk property (Django-style shortcut) ──────────────────────────
+    # ── pk property ──────────────────────────────────────────────────
 
     @property
     def pk(self) -> Any:
-        """Shortcut for accessing the primary key value (Django-style)."""
+        """Shortcut for accessing the primary key value."""
         return getattr(self, self._pk_attr, None)
 
     @pk.setter
@@ -495,10 +493,10 @@ class Model(metaclass=ModelMeta):
         """
         Create multiple records efficiently using batched inserts.
 
-        Like Django's bulk_create -- faster than individual create() calls.
+        Faster than individual create() calls.
 
-        Note: Signals (pre_save/post_save) are NOT fired for bulk_create
-        (same behavior as Django). Use individual create() if you need signals.
+        Note: Signals (pre_save/post_save) are NOT fired for bulk_create.
+        Use individual create() if you need signals.
 
         Usage:
             users = await User.bulk_create([
@@ -563,9 +561,9 @@ class Model(metaclass=ModelMeta):
         """
         Update specific fields on multiple model instances efficiently.
 
-        Like Django's bulk_update -- updates only specified fields.
+        Updates only specified fields.
 
-        Note: Signals are NOT fired (same as Django). Auto-now fields
+        Note: Signals are NOT fired. Auto-now fields
         are NOT updated automatically.
 
         Usage:
@@ -636,7 +634,7 @@ class Model(metaclass=ModelMeta):
     @classmethod
     async def latest(cls, field_name: Optional[str] = None) -> Model:
         """
-        Return the latest record by date field (Django-style).
+        Return the latest record by date field.
 
         Uses Meta.get_latest_by if field_name is not provided.
 
@@ -659,7 +657,7 @@ class Model(metaclass=ModelMeta):
     @classmethod
     async def earliest(cls, field_name: Optional[str] = None) -> Model:
         """
-        Return the earliest record by date field (Django-style).
+        Return the earliest record by date field.
 
         Uses Meta.get_latest_by if field_name is not provided.
 
@@ -682,7 +680,7 @@ class Model(metaclass=ModelMeta):
     @classmethod
     async def raw(cls, sql: str, params: Optional[List[Any]] = None) -> List[Model]:
         """
-        Execute raw SQL and return model instances (Django-style).
+        Execute raw SQL and return model instances.
 
         The SQL must return columns matching the model's fields.
 
@@ -701,7 +699,7 @@ class Model(metaclass=ModelMeta):
     @classmethod
     def using(cls, db_alias: str) -> Q:
         """
-        Target a specific database for this query (Django-style).
+        Target a specific database for this query.
 
         Usage:
             users = await User.using("replica").filter(active=True).all()
@@ -728,7 +726,7 @@ class Model(metaclass=ModelMeta):
         If PK is set, updates. Otherwise, inserts.
 
         Args:
-            update_fields: Only update these specific fields (Django-style).
+            update_fields: Only update these specific fields.
                           More efficient -- generates SET for only these columns.
             force_insert: Force INSERT even if PK is set.
             force_update: Force UPDATE even if PK is None (raises if no PK).
@@ -894,7 +892,7 @@ class Model(metaclass=ModelMeta):
 
     def full_clean(self, exclude: Optional[List[str]] = None) -> None:
         """
-        Validate instance completely -- like Django's Model.full_clean().
+        Validate instance completely.
 
         Calls:
         1. clean_fields() -- per-field validation (type, null, choices, validators)
@@ -954,8 +952,7 @@ class Model(metaclass=ModelMeta):
 
         Args:
             fields: Optional list of field names to refresh. If None,
-                    refreshes all fields. Matches Django's
-                    ``refresh_from_db(fields=...)`` API.
+                    refreshes all fields.
         """
         pk_val = getattr(self, self._pk_attr)
         if pk_val is None:
@@ -992,7 +989,7 @@ class Model(metaclass=ModelMeta):
         self._snapshot_original()
         return self
 
-    # Django-style alias
+    # Alias
     refresh_from_db = refresh
 
     def _snapshot_original(self) -> None:

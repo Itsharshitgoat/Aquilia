@@ -674,7 +674,7 @@ from .artifacts import (
 )
 
 # ============================================================================
-# Testing Framework (Django-style test infrastructure)
+# Testing Framework
 # ============================================================================
 
 try:
@@ -693,7 +693,7 @@ except ImportError:
     pass
 
 # ============================================================================
-# Admin System (AquilAdmin -- Django-style auto-detecting admin)
+# Admin System (AquilAdmin -- auto-detecting admin)
 # ============================================================================
 
 from .admin import (

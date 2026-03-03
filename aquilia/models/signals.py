@@ -256,8 +256,6 @@ class Signal:
 
         Unlike send(), this does NOT stop on exceptions -- every receiver
         runs regardless. Returns list of (receiver, response_or_exception).
-
-        Like Django's Signal.send_robust().
         """
         results = []
         for ref, filter_sender, _ in self._receivers:

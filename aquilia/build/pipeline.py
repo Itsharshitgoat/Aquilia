@@ -1,11 +1,11 @@
 """
-Aquilia Build Pipeline -- Vite-inspired compile-before-serve orchestrator.
+Aquilia Build Pipeline -- compile-before-serve orchestrator.
 
 Sequences the complete build lifecycle:
 
     Discovery → Validation → Static Check → Compile → Bundle → Fingerprint
 
-Like Vite/Next.js, the build pipeline runs **before** the server starts.
+The build pipeline runs **before** the server starts.
 If any phase fails, the build is aborted and a clear error report is
 displayed -- the server never boots with broken code.
 
@@ -273,7 +273,7 @@ class BuildResult:
 
 class AquiliaBuildPipeline:
     """
-    Vite-inspired build pipeline for Aquilia.
+    Aquilia build pipeline.
 
     Sequences:
     1. **Discovery** -- Scan modules/, discover components via AST

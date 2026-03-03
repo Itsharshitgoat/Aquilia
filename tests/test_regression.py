@@ -108,12 +108,13 @@ class TestTraceRemoval:
         assert "trace.journal" not in source, "shutdown() still references trace.journal"
         assert "trace.snapshot" not in source, "shutdown() still references trace.snapshot"
 
-    def test_server_startup_uses_logger_debug(self):
-        """startup() should use self.logger.debug for timing."""
+    def test_server_startup_no_trace(self):
+        """startup() should not reference old trace system."""
         import inspect
         from aquilia.server import AquiliaServer
         source = inspect.getsource(AquiliaServer.startup)
-        assert "self.logger.debug" in source, "startup() should use logger.debug for timing"
+        assert "self.trace" not in source, "startup() still references self.trace"
+        assert "trace.journal" not in source, "startup() still references trace.journal"
 
     def test_cache_cli_no_trace_path(self):
         """cmd_cache_stats() must not reference .aquilia/diagnostics.json."""

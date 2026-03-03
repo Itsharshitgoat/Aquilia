@@ -12,7 +12,7 @@ Commands:
     serve    - Production server (immutable)
     freeze   - Generate immutable artifacts
     inspect  - Query compiled artifacts
-    migrate  - Convert legacy Django-style projects
+    migrate  - Convert legacy projects
     doctor   - Diagnose workspace issues
     version  - Show version information
 """
@@ -254,7 +254,7 @@ def init_workspace(ctx, name: Optional[str], minimal: bool, template: Optional[s
     Create a new Aquilia workspace.
     
     When run without arguments, starts an interactive setup wizard with
-    Vite-style prompts. Pass --yes to skip prompts and use defaults.
+    styled prompts. Pass --yes to skip prompts and use defaults.
 
     Examples:
       aq init workspace                    # Interactive mode
@@ -934,9 +934,8 @@ def build(ctx, mode: str, output: str, compress: Optional[str], check_only: bool
     """
     Build the workspace (compile, check, bundle).
 
-    Like Vite or Next.js, the build command compiles, validates,
-    and bundles the entire workspace into optimized Crous binary
-    artifacts. If any check fails, the build is aborted.
+    Compiles, validates, and bundles the entire workspace into optimized
+    Crous binary artifacts. If any check fails, the build is aborted.
 
     Examples:
       aq build
@@ -1134,7 +1133,7 @@ def inspect_config(ctx):
 @click.pass_context
 def migrate(ctx, source: str, dry_run: bool):
     """
-    Migrate from Django-style layout.
+    Migrate from legacy layout.
     
     Examples:
       aq migrate legacy --dry-run
@@ -2172,7 +2171,7 @@ def admin_createsuperuser(ctx, username: str, email: str, password: str, first_n
     Create an admin superuser in the database.
 
     Stores credentials securely using Argon2id/PBKDF2 password hashing
-    in the admin_users table (Django-like architecture).
+    in the admin_users table.
 
     Requires ``aq db migrate`` to have been run first to create the
     admin_users table.

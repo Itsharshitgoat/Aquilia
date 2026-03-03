@@ -1,5 +1,5 @@
 """
-Aquilia Pagination System -- Django-REST-style pagination backends.
+Aquilia Pagination System -- declarative pagination backends.
 
 Provides three pagination strategies out of the box:
 

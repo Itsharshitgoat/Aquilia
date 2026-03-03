@@ -380,7 +380,6 @@ class ASGIAdapter:
                         self._has_routes_cache = None
                         self._debug = None
                         self._server_runtime = None
-                        self.logger.debug("Server startup complete")
                     else:
                         self.logger.warning("No server instance - controllers may not be loaded")
                     await send({"type": "lifespan.startup.complete"})
@@ -399,7 +398,6 @@ class ASGIAdapter:
                 try:
                     if self.server:
                         await self.server.shutdown()
-                        self.logger.debug("Server shutdown complete")
                     await send({"type": "lifespan.shutdown.complete"})
                 except Exception as e:
                     self.logger.error(f"Shutdown error: {e}", exc_info=True)

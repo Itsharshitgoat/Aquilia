@@ -2,7 +2,6 @@
 AquilAdmin -- ModelAdmin Options.
 
 Declarative per-model configuration for the admin interface.
-Inspired by Django's ModelAdmin but with Aquilia's modern patterns.
 
 Usage:
     class UserAdmin(ModelAdmin):

@@ -42,7 +42,7 @@ __all__ = [
     "Greatest",
     "Least",
     "NullIf",
-    # Django-style string/math functions
+    # String/math functions
     "Length",
     "Upper",
     "Lower",
@@ -631,7 +631,7 @@ class NullIf(Expression):
         return f"NullIf({self.expr1!r}, {self.expr2!r})"
 
 
-# ── Django-style String Functions ────────────────────────────────────────────
+# ── String Functions ─────────────────────────────────────────────────────────
 
 
 class Length(Func):
@@ -801,7 +801,7 @@ class Replace(Func):
         super().__init__("REPLACE", expr, old_v, new_v)
 
 
-# ── Django-style Math Functions ──────────────────────────────────────────────
+# ── Math Functions ───────────────────────────────────────────────────────────
 
 
 class Abs(Func):
@@ -857,7 +857,7 @@ class Power(Expression):
         return f"Power({self.expression!r}, {self.exponent!r})"
 
 
-# ── Django-style Date Functions ──────────────────────────────────────────────
+# ── Date Functions ───────────────────────────────────────────────────────────
 
 
 class Now(Expression):

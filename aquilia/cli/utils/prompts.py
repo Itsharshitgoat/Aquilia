@@ -1,7 +1,7 @@
 """
 Aquilia CLI -- Interactive prompt toolkit.
 
-Vite-style beautiful interactive prompts built on Click.
+Beautiful interactive prompts built on Click.
 Provides select menus, confirm toggles, multi-select, and styled
 text input -- all with colour-coded feedback.
 
@@ -199,7 +199,7 @@ def _read_line() -> str:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def flow_header(title: str, subtitle: str = "", *, fg: str = "cyan") -> None:
-    """Print a minimal flow header like Vite/create-next-app."""
+    """Print a minimal flow header."""
     click.echo()
     click.echo(f"  {_c(title, fg=fg, bold=True)}")
     if subtitle:

@@ -71,7 +71,6 @@ class AquiliaServer:
         self.config = config or ConfigLoader()
         self.logger = logging.getLogger("aquilia.server")
         self.logger.info("Initializing AquiliaServer...")
-        self.logger.info(f"Config has sessions: {'sessions' in self.config.to_dict()}")
         self.mode = mode
         
         # v2: Health registry for subsystem tracking
@@ -248,9 +247,6 @@ class AquiliaServer:
         session_config = self.config.get_session_config()
         auth_config = self.config.get_auth_config()
         
-        self.logger.debug(f"Session config: {session_config}")
-        self.logger.debug(f"Auth config: {auth_config}")
-        
         # Initialize SessionEngine if either Sessions or Auth is enabled
         # Auth REQUIRES sessions
         use_sessions = session_config.get("enabled", False)
@@ -264,7 +260,6 @@ class AquiliaServer:
         self._auth_manager = None
         
         if use_sessions:
-            self.logger.info("Initializing session management...")
             try:
                 # Create session engine
                 session_engine = self._create_session_engine(session_config)
@@ -276,7 +271,6 @@ class AquiliaServer:
             # Try to set up auth if requested AND session engine succeeded
             auth_initialized = False
             if use_auth and self._session_engine is not None:
-                self.logger.info("Initializing authentication system...")
                 try:
                     # Create AuthManager
                     auth_manager = self._create_auth_manager(auth_config)
@@ -313,7 +307,6 @@ class AquiliaServer:
                         container.register(ValueProvider(value=auth_manager.token_manager, token="aquilia.auth.tokens.TokenManager", scope="app"))
                         container.register(ValueProvider(value=auth_manager.password_hasher, token="aquilia.auth.hashing.PasswordHasher", scope="app"))
                         
-                    self.logger.info("Auth system components registered in DI")
                     auth_initialized = True
                     
                 except Exception as e:
@@ -332,7 +325,6 @@ class AquiliaServer:
                     priority=15,
                     name="session",
                 )
-                self.logger.info("Session management enabled (Auth disabled or failed)")
             
             # Register SessionEngine in DI (if engine was created)
             if self._session_engine is not None:
@@ -349,7 +341,7 @@ class AquiliaServer:
                 for container in self.runtime.di_containers.values():
                     container.register(engine_provider)
         else:
-            self.logger.info("Session/Auth management disabled")
+            pass
 
         # Add template engine integration
         template_config = self.config.get_template_config()
@@ -363,8 +355,6 @@ class AquiliaServer:
                     break
         
         if use_templates:
-            self.logger.info("Initializing template engine...")
-            
             # Step 1: Initialize Engine with config
             from .templates import TemplateEngine
             from .templates.loader import TemplateLoader
@@ -404,7 +394,6 @@ class AquiliaServer:
             
             # Deduplicate
             search_paths = list(dict.fromkeys(search_paths))
-            self.logger.debug(f"Template search paths: {search_paths}")
 
             # Register loader with discovered paths
             loader = TemplateLoader(search_paths=search_paths)
@@ -433,7 +422,6 @@ class AquiliaServer:
                 priority=25,  # Processed after Auth/Session
                 name="templates",
             )
-            self.logger.info("Template engine initialized and middleware registered")
 
         # ── Mail subsystem ───────────────────────────────────────────────
         self._setup_mail()
@@ -479,7 +467,6 @@ class AquiliaServer:
             auth_manager=self._auth_manager,
             session_engine=self._session_engine,
         )
-        self.logger.info("Initialized WebSocket subsystem")
             
         # Register app-specific middlewares from Aquilary manifest
         if hasattr(self, "aquilary"):
@@ -540,7 +527,6 @@ class AquiliaServer:
             priority=priority,
             name=name or class_name,
         )
-        self.logger.info(f"Registered app middleware: {class_name} (priority={priority})")
 
     def _get_static_prefix(self) -> str:
         """Get the static URL prefix from config or default."""
@@ -555,8 +541,7 @@ class AquiliaServer:
         """
         Auto-discover static/ directories inside loaded modules.
 
-        Works like Django's AppDirectoriesFinder: scans each module's
-        package directory for a ``static/`` subdirectory.  Found directories
+        Scans each module's package directory for a ``static/`` subdirectory.  Found directories
         are grouped under the configured static URL prefix so that
         ``{{ static('js/chat.js') }}`` resolves correctly regardless of
         which module owns the file.
@@ -614,9 +599,6 @@ class AquiliaServer:
                 if static_dir.is_dir():
                     resolved = str(static_dir.resolve())
                     discovered.append(resolved)
-                    self.logger.debug(
-                        f"Discovered module static dir: {ctx.name} → {resolved}"
-                    )
 
         if discovered:
             return {static_prefix: discovered}
@@ -661,7 +643,6 @@ class AquiliaServer:
                 x_port=proxy_cfg.get("x_port", 0),
             )
             self.middleware_stack.add(mw, scope="global", priority=3, name="proxy_fix")
-            self.logger.info("ProxyFix middleware enabled")
 
         # ── HTTPS Redirect (priority 4) ──────────────────────────────────
         if security_config.get("https_redirect"):
@@ -675,7 +656,6 @@ class AquiliaServer:
                 exclude_hosts=https_cfg.get("exclude_hosts"),
             )
             self.middleware_stack.add(mw, scope="global", priority=4, name="https_redirect")
-            self.logger.info("HTTPS redirect middleware enabled")
 
         # ── Static Files (priority 6) ────────────────────────────────────
         static_config = integrations.get("static_files", {})
@@ -686,7 +666,6 @@ class AquiliaServer:
             directories = dict(static_config.get("directories", {"/static": "static"}))
 
             # Auto-discover static/ dirs inside loaded modules
-            # (like Django's AppDirectoriesFinder)
             module_static_dirs = self._discover_module_static_dirs()
 
             mw = StaticMiddleware(
@@ -702,14 +681,6 @@ class AquiliaServer:
             )
             self.middleware_stack.add(mw, scope="global", priority=6, name="static_files")
             self._static_middleware = mw
-            all_dirs = dict(directories)
-            for prefix, paths in module_static_dirs.items():
-                for p in paths:
-                    all_dirs[f"{prefix} (module)"] = p
-            self.logger.info(
-                f"Static files middleware enabled: "
-                f"{', '.join(f'{k} -> {v}' for k, v in all_dirs.items())}"
-            )
 
         # ── Security Headers / Helmet (priority 7) ───────────────────────
         if security_config.get("helmet_enabled", False):
@@ -727,7 +698,6 @@ class AquiliaServer:
                 remove_server_header=helmet_cfg.get("remove_server_header", True),
             )
             self.middleware_stack.add(mw, scope="global", priority=7, name="security_headers")
-            self.logger.info("Security headers (helmet) middleware enabled")
 
         # ── HSTS (priority 8) ────────────────────────────────────────────
         if security_config.get("hsts", False):
@@ -741,7 +711,6 @@ class AquiliaServer:
                 preload=hsts_cfg.get("preload", False),
             )
             self.middleware_stack.add(mw, scope="global", priority=8, name="hsts")
-            self.logger.info("HSTS middleware enabled")
 
         # ── CSP (priority 9) ─────────────────────────────────────────────
         csp_config = security_config.get("csp") or integrations.get("csp", {})
@@ -759,7 +728,6 @@ class AquiliaServer:
                 nonce=csp_config.get("nonce", True),
             )
             self.middleware_stack.add(mw, scope="global", priority=9, name="csp")
-            self.logger.info("CSP middleware enabled")
 
         # ── CORS (priority 11) ───────────────────────────────────────────
         cors_config = security_config.get("cors") or integrations.get("cors", {})
@@ -779,7 +747,6 @@ class AquiliaServer:
                 # Simple flag -- use permissive defaults
                 mw = EnhancedCORSMiddleware(allow_origins=["*"])
             self.middleware_stack.add(mw, scope="global", priority=11, name="cors")
-            self.logger.info("CORS middleware enabled")
 
         # ── CSRF Protection (priority 10) ────────────────────────────────
         # Must run AFTER session middleware (priority 15) so session is available,
@@ -808,7 +775,6 @@ class AquiliaServer:
                 failure_status=csrf_cfg.get("failure_status", 403),
             )
             self.middleware_stack.add(mw, scope="global", priority=10, name="csrf")
-            self.logger.info("CSRF protection middleware enabled")
 
             # Wire CSRF token function into TemplateMiddleware if present
             self._csrf_token_func = _csrf_token_func
@@ -837,7 +803,6 @@ class AquiliaServer:
                 exempt_paths=exempt,
             )
             self.middleware_stack.add(mw, scope="global", priority=12, name="rate_limit")
-            self.logger.info("Rate limiting middleware enabled")
     
     def _is_debug(self) -> bool:
         """Check if debug mode is enabled.
@@ -875,10 +840,7 @@ class AquiliaServer:
         mail_config = self.config.get_mail_config()
         if not mail_config.get("enabled", False):
             self._mail_service = None
-            self.logger.debug("Mail subsystem disabled")
             return
-
-        self.logger.info("Initializing mail subsystem...")
 
         from .mail.di_providers import register_mail_providers
         from .mail.service import set_mail_service
@@ -903,13 +865,6 @@ class AquiliaServer:
         set_mail_service(svc)
         self._mail_service = svc
 
-        self.logger.info(
-            f"Mail configured "
-            f"(from={svc.config.default_from!r}, "
-            f"providers={len(svc.config.providers)}, "
-            f"console={svc.config.console_backend})"
-        )
-
     def _setup_cache(self):
         """
         Initialize cache subsystem from workspace config.
@@ -928,10 +883,7 @@ class AquiliaServer:
         cache_config = self.config.get_cache_config()
         if not cache_config.get("enabled", False):
             self._cache_service = None
-            self.logger.debug("Cache subsystem disabled")
             return
-
-        self.logger.info("Initializing cache subsystem...")
 
         try:
             from .cache.di_providers import (
@@ -964,14 +916,7 @@ class AquiliaServer:
                     priority=26,
                     name="cache",
                 )
-                self.logger.info("Cache middleware enabled")
 
-            backend_name = cache_config.get("backend", "memory")
-            self.logger.info(
-                f"Cache configured (backend={backend_name}, "
-                f"default_ttl={config_obj.default_ttl}s, "
-                f"max_size={config_obj.max_size})"
-            )
         except Exception as e:
             self._cache_service = None
             self.logger.error(f"Cache subsystem init failed (non-fatal): {e}", exc_info=True)
@@ -1933,7 +1878,6 @@ class AquiliaServer:
                                     try:
                                         guard_instance = guard_class(**guard_kwargs)
                                         guards.append(guard_instance)
-                                        self.logger.debug(f"Instantiated guard {guard_class.__name__} for {namespace}")
                                     except Exception as ge:
                                         self.logger.warning(f"Failed to instantiate guard {guard_class}: {ge}")
                     
@@ -2045,7 +1989,6 @@ class AquiliaServer:
         try:
             existing_match = await self.controller_router.match("/", "GET", {})
             if existing_match:
-                self.logger.debug("Starter controller skipped -- GET / already registered")
                 return None
         except Exception:
             pass
@@ -2199,7 +2142,6 @@ class AquiliaServer:
             from .models.base import ModelRegistry, Model
             from .db.engine import AquiliaDatabase, configure_database, set_database
         except ImportError:
-            self.logger.debug("Model system not available (missing deps?)")
             return
 
         # ── Phase 1: Collect model paths ──────────────────────────────────
@@ -2242,7 +2184,7 @@ class AquiliaServer:
         if total_count > 0:
             self.logger.info(f"Found {total_count} model file(s), registering models...")
         else:
-            self.logger.debug("No model files discovered via scan -- checking for pre-registered models...")
+            pass
 
         # ── Phase 2a: Parse and register AMDL (legacy) ────────────────────
         legacy_registry = getattr(self.runtime, '_model_registry', None) or LegacyRegistry()
@@ -2254,7 +2196,6 @@ class AquiliaServer:
                 for model in amdl_file.models:
                     if model.name not in legacy_registry._models:
                         legacy_registry.register_model(model)
-                        self.logger.debug(f"  Registered AMDL model: {model.name}")
                         amdl_count += 1
             except Exception as e:
                 self.logger.warning(f"Failed to parse {amdl_path}: {e}")
@@ -2335,7 +2276,6 @@ class AquiliaServer:
                         and attr is not Model
                     ):
                         py_count += 1
-                        self.logger.debug(f"  Registered Python model: {attr.__name__}")
             except Exception as e:
                 self.logger.warning(f"Failed to import {py_path}: {e}")
 
@@ -2456,9 +2396,6 @@ class AquiliaServer:
             )
         else:
             self._amdl_database = None
-            self.logger.debug(
-                "No database.url in config -- models registered without DB connection"
-            )
 
     async def startup(self):
         """
@@ -2491,65 +2428,40 @@ class AquiliaServer:
             
             _boot_t0 = _time.monotonic()
 
-            self.logger.info("Starting Aquilia server with Aquilary registry...")
-            
-            # Log registry information
-            self.logger.info(f"Registry fingerprint: {self.aquilary.fingerprint}")
-            self.logger.info(f"Mode: {self.mode.value}")
-            self.logger.info(f"Apps loaded: {len(self.runtime.meta.app_contexts)}")
+            self.logger.info("Starting Aquilia server...")
             
             # Step 0: Perform runtime auto-discovery
-            self.logger.info("Performing runtime auto-discovery...")
-            _t0 = _time.monotonic()
             self.runtime.perform_autodiscovery()
-            self.logger.debug(f"Autodiscovery completed in {(_time.monotonic() - _t0) * 1000:.1f}ms")
             
             # Step 1: Load and compile controllers
-            self.logger.info("Loading controllers from manifests...")
-            _t0 = _time.monotonic()
             await self._load_controllers()
-            self.logger.debug(f"Controllers loaded in {(_time.monotonic() - _t0) * 1000:.1f}ms")
 
             # Step 1.5: Wire admin integration (if configured)
-            _t0 = _time.monotonic()
             self._wire_admin_integration()
-            self.logger.debug(f"Admin integration in {(_time.monotonic() - _t0) * 1000:.1f}ms")
         
             # Step 2: Compile routes (includes service registration and handler wrapping)
-            self.logger.info("Compiling routes with DI integration...")
-            _t0 = _time.monotonic()
             self.runtime.compile_routes()
-            self.logger.debug(f"Routes compiled in {(_time.monotonic() - _t0) * 1000:.1f}ms")
             
             # Step 3: Start lifecycle (runs app startup hooks in dependency order)
-            self.logger.info("Starting app lifecycle hooks...")
-            _t0 = _time.monotonic()
             try:
                 await self.coordinator.startup()
-                self.logger.debug(f"Lifecycle started in {(_time.monotonic() - _t0) * 1000:.1f}ms")
             except Exception as e:
                 from .lifecycle import LifecycleError
                 self.logger.error(f"Lifecycle startup failed: {e}")
                 raise LifecycleError(f"Startup failed: {e}") from e
             
             # Step 3.1: Register AMDL models from apps (if any .amdl files exist)
-            _t0 = _time.monotonic()
             await self._register_amdl_models()
-            self.logger.debug(f"Models registered in {(_time.monotonic() - _t0) * 1000:.1f}ms")
             
             # Step 3.2: Start mail subsystem (connect providers)
             if hasattr(self, '_mail_service') and self._mail_service is not None:
-                _t0 = _time.monotonic()
                 try:
                     await self._mail_service.on_startup()
-                    self.logger.debug(f"Mail started in {(_time.monotonic() - _t0) * 1000:.1f}ms")
                 except Exception as e:
                     self.logger.error(f"Mail startup failed: {e}")
                     # Non-fatal -- app can run without mail
 
             # Step 3.5: Register effects from manifests and initialize providers
-            self.logger.info("Registering and initializing effect providers...")
-            _t0 = _time.monotonic()
             self.runtime._register_effects()
             try:
                 from .effects import EffectRegistry
@@ -2571,18 +2483,14 @@ class AquiliaServer:
                     self.controller_engine.effect_registry = effect_registry
 
                 self.logger.info(f"Effect providers initialized ({len(effect_registry.providers)} registered)")
-                self.logger.debug(f"Effects initialized in {(_time.monotonic() - _t0) * 1000:.1f}ms")
             except Exception as e:
                 self._effect_registry = None
-                self.logger.debug(f"No effect providers to initialize: {e}")
             
             # Step 3.6: Initialize cache subsystem (connect backend)
             if hasattr(self, '_cache_service') and self._cache_service is not None:
-                _t0 = _time.monotonic()
                 try:
                     await self._cache_service.initialize()
                     self.logger.info("Cache backend connected")
-                    self.logger.debug(f"Cache started in {(_time.monotonic() - _t0) * 1000:.1f}ms")
                 except Exception as e:
                     self.logger.error(f"Cache startup failed: {e}")
                     # Non-fatal -- app can run without cache
@@ -2650,21 +2558,16 @@ class AquiliaServer:
         
         This method is idempotent and safe to call multiple times.
         """
-        import time as _time
-
         if not self._startup_complete:
             return  # Nothing to shut down
         
         self.logger.info("Shutting down Aquilia server...")
         
         # Run lifecycle shutdown hooks
-        _t0 = _time.monotonic()
         await self.coordinator.shutdown()
-        self.logger.debug(f"Lifecycle shutdown in {(_time.monotonic() - _t0) * 1000:.1f}ms")
         
         # Shutdown mail subsystem
         if hasattr(self, '_mail_service') and self._mail_service is not None:
-            _t0 = _time.monotonic()
             try:
                 await self._mail_service.on_shutdown()
                 self.logger.info("Mail subsystem shut down")
@@ -2673,7 +2576,6 @@ class AquiliaServer:
 
         # Shutdown cache subsystem
         if hasattr(self, '_cache_service') and self._cache_service is not None:
-            _t0 = _time.monotonic()
             try:
                 await self._cache_service.shutdown()
                 self.logger.info("Cache subsystem shut down")
@@ -2681,18 +2583,14 @@ class AquiliaServer:
                 self.logger.warning(f"Error shutting down cache subsystem: {e}")
 
         # Cleanup DI containers
-        _t0 = _time.monotonic()
         for app_name, container in self.runtime.di_containers.items():
             try:
                 await container.shutdown()
-                self.logger.debug(f"Cleaned up DI container for app '{app_name}'")
             except Exception as e:
                 self.logger.warning(f"Error cleaning up container for '{app_name}': {e}")
-        self.logger.debug(f"DI cleanup in {(_time.monotonic() - _t0) * 1000:.1f}ms")
         
         # Finalize effect providers
         if hasattr(self, '_effect_registry') and self._effect_registry:
-            _t0 = _time.monotonic()
             try:
                 await self._effect_registry.finalize_all()
                 self.logger.info("Effect providers finalized")
@@ -2701,7 +2599,6 @@ class AquiliaServer:
         
         # Shutdown WebSocket runtime
         if hasattr(self, 'aquila_sockets') and self.aquila_sockets:
-            _t0 = _time.monotonic()
             try:
                 await self.aquila_sockets.shutdown()
                 self.logger.info("WebSocket runtime shut down")
@@ -2710,7 +2607,6 @@ class AquiliaServer:
 
         # Disconnect AMDL database if connected
         if hasattr(self, '_amdl_database') and self._amdl_database:
-            _t0 = _time.monotonic()
             try:
                 await self._amdl_database.disconnect()
                 self.logger.info("AMDL database disconnected")
@@ -2819,7 +2715,7 @@ class AquiliaServer:
     
     def lifespan(self):
         """
-        ASGI lifespan context manager (FastAPI-compatible pattern).
+        ASGI lifespan context manager.
         
         Use with ASGI servers that support the lifespan protocol::
         

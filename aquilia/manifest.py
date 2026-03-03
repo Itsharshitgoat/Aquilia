@@ -7,7 +7,7 @@ Provides precise control over middleware, sessions, DI, lifecycle, and error han
 Architecture v2:
 - ComponentRef: Universal typed reference for all component kinds
 - ComponentKind: Enum for component classification
-- exports/imports: NestJS-style cross-module provider visibility
+- exports/imports: Cross-module provider visibility
 - auto_discover: Convention-over-configuration file scanning
 - guards/pipes/interceptors: First-class request pipeline components
 """
@@ -351,7 +351,7 @@ class AppManifest:
     Production-grade application manifest for complete app configuration.
     
     Architecture v2 additions:
-    - exports/imports: Cross-module provider visibility (NestJS-style)
+    - exports/imports: Cross-module provider visibility
     - guards/pipes/interceptors: First-class request pipeline components
     - auto_discover: Convention-over-configuration file scanning
     - All component lists accept Union[str, ComponentRef] for flexibility
@@ -411,7 +411,7 @@ class AppManifest:
     # Feature flags
     features: List[FeatureConfig] = field(default_factory=list)
     
-    # v2: Cross-module dependency management (NestJS-style)
+    # v2: Cross-module dependency management
     exports: List[str] = field(default_factory=list)       # Services visible to importing modules
     imports: List[str] = field(default_factory=list)        # Modules this module depends on
     

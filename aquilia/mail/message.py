@@ -1,7 +1,7 @@
 """
 AquilaMail Messages -- Developer-facing message classes.
 
-Django-like API:
+API:
     EmailMessage          -- plain text (optionally with HTML)
     EmailMultiAlternatives -- plain text + HTML + arbitrary MIME alternatives
     TemplateMessage       -- rendered from an ATS template
@@ -58,8 +58,7 @@ class EmailMessage:
     """
     A single email message -- the primary API for sending mail.
 
-    Mirrors Django's EmailMessage but integrated with Aquilia's
-    envelope pipeline, DI, and fault system.
+    Integrated with Aquilia's envelope pipeline, DI, and fault system.
 
     Usage:
         msg = EmailMessage(

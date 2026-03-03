@@ -225,7 +225,6 @@ class ModelServingServer:
                 await self._runtime.infer(batch)
                 elapsed = (time.monotonic() - start) * 1000
                 warmup_times.append(elapsed)
-                logger.debug("Warmup %d/%d: %.1fms", i + 1, self._warmup.num_requests, elapsed)
             except Exception as exc:
                 logger.warning("Warmup request %d failed: %s", i, exc)
         if warmup_times:

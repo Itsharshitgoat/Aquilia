@@ -1,7 +1,7 @@
 """
-AquilAdmin -- Comprehensive Admin Models (Django-grade Architecture).
+AquilAdmin -- Comprehensive Admin Models.
 
-Provides a full-featured admin model hierarchy inspired by Django:
+Provides a full-featured admin model hierarchy:
 
     - ``ContentType``      -- tracks every model/table in the project
     - ``AdminPermission``  -- codename-based permissions tied to content types
@@ -117,7 +117,6 @@ if _HAS_ORM:
         """
         Tracks every model registered in the project.
 
-        Analogous to Django's ``django.contrib.contenttypes.models.ContentType``.
         Used by AdminPermission and AdminLogEntry to reference models generically.
         """
 
@@ -175,7 +174,7 @@ if _HAS_ORM:
         """
         A single permission tied to a ContentType.
 
-        Follows Django's ``auth.Permission`` pattern:
+        Pattern:
             codename = "change_user"
             name     = "Can change user"
             content_type → ContentType (app_label="auth", model="user")
@@ -224,7 +223,6 @@ if _HAS_ORM:
         Named group of permissions.
 
         Users can belong to multiple groups, inheriting all group permissions.
-        Analogous to Django's ``auth.Group``.
         """
 
         table = "admin_groups"

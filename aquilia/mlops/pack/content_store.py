@@ -47,7 +47,6 @@ class ContentStore:
         """
         path = self._blob_path(digest)
         if path.exists():
-            logger.debug("Blob already exists: %s", digest)
             return str(path)
 
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -490,8 +490,6 @@ class MemoryBackend(CacheBackend):
             try:
                 await asyncio.sleep(self._sweep_interval)
                 swept = await self._sweep_expired()
-                if swept and swept > 0:
-                    logger.debug(f"TTL sweeper removed {swept} expired entries")
             except asyncio.CancelledError:
                 break
             except Exception:

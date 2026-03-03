@@ -225,8 +225,8 @@ def _discover_models(
 
     When admin integration is enabled in workspace.py, admin models
     (ContentType, AdminPermission, AdminGroup, AdminUser, AdminLogEntry,
-    AdminSession) are automatically included -- mirroring Django's
-    ``django.contrib.admin`` model discovery.
+    AdminSession) are automatically included via the built-in
+    admin model discovery.
 
     Args:
         search_dirs: Explicit directories to search

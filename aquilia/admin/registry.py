@@ -106,7 +106,7 @@ def autodiscover() -> Dict[str, Type[Model]]:
     doesn't already have an explicit ModelAdmin with the default.
 
     Also registers the built-in admin models (AdminUser, AdminGroup, etc.)
-    with rich ModelAdmin configurations for Django-admin-like management.
+    with rich ModelAdmin configurations for admin management.
 
     Returns:
         Dictionary of model_name -> model_class that were auto-registered.
@@ -135,7 +135,6 @@ def autodiscover() -> Dict[str, Type[Model]]:
         admin_instance = ModelAdmin(model=model_cls)
         site.register_admin(model_cls, admin_instance)
         auto_registered[name] = model_cls
-        logger.debug("Auto-registered model: %s", name)
 
     logger.info(
         "Admin autodiscover complete: %d models auto-registered, %d total",
@@ -149,7 +148,7 @@ def autodiscover() -> Dict[str, Type[Model]]:
 def _register_admin_models(site: "AdminSite") -> None:
     """
     Register the built-in admin models (AdminUser, AdminGroup, etc.)
-    with rich ModelAdmin subclasses for Django-admin-like data management.
+    with rich ModelAdmin subclasses for admin data management.
 
     These models store real data in database tables -- ContentType tracks
     registered models, AdminUser stores staff accounts, AdminLogEntry
@@ -264,8 +263,6 @@ def _register_admin_models(site: "AdminSite") -> None:
             site.register_admin(AdminAuditEntry, AdminAuditEntryAdmin(model=AdminAuditEntry))
     except Exception:
         pass
-
-    logger.debug("Registered built-in admin models (ContentType, Permission, Group, User, LogEntry, Session, AuditEntry)")
 
 
 def flush_pending_registrations() -> int:

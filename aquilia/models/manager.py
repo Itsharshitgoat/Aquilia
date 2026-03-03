@@ -1,7 +1,7 @@
 """
 Aquilia Model Manager -- descriptor-based QuerySet access.
 
-Django-inspired Manager with Aquilia's unique async-first design.
+Manager with async-first design.
 
 Every Model gets a default ``objects`` Manager, which proxies all
 query methods to the Q (QuerySet) class. Custom managers can override
@@ -125,7 +125,7 @@ class BaseManager:
     # ── Forwarded chain methods (return Q) ───────────────────────────
 
     def filter(self, *q_nodes: Any, **kwargs: Any) -> Q:
-        """Django-style filtering. See Q.filter() for details."""
+        """Field filtering. See Q.filter() for details."""
         return self.get_queryset().filter(*q_nodes, **kwargs)
 
     def exclude(self, **kwargs: Any) -> Q:
@@ -140,7 +140,7 @@ class BaseManager:
         """ORDER BY. See Q.order() for details -- supports str, F().desc(), OrderBy."""
         return self.get_queryset().order(*fields)
 
-    # Django-style alias
+    # Alias
     order_by = order
 
     def limit(self, n: int) -> Q:

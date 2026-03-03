@@ -259,7 +259,7 @@ class ModuleGenerator:
                 route_prefix="{self.route_prefix}",
                 base_path="modules.{self.name}",
                 
-                # ── Cross-Module Dependencies (NestJS-style) ─────────────────────
+                # ── Cross-Module Dependencies ─────────────────────
                 imports=[{deps_list}],
                 exports=[
                     # Services/components visible to modules that import this module.

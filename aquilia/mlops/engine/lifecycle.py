@@ -102,7 +102,7 @@ async def mlops_on_startup(
                 await cache.initialize()
                 logger.info("  CacheService initialized")
     except Exception as exc:
-        logger.debug("  CacheService init: %s", exc)
+        pass
 
     # 5. Ensure artifact store directory exists
     try:
@@ -113,7 +113,7 @@ async def mlops_on_startup(
         os.makedirs(artifact_dir, exist_ok=True)
         logger.info("  Artifact store directory ready (%s)", artifact_dir)
     except Exception as exc:
-        logger.debug("  Artifact store dir: %s", exc)
+        pass
 
     # 6. Register MLOps fault event listener for metrics observability
     try:
@@ -142,7 +142,7 @@ async def mlops_on_startup(
                 fault_engine.on_fault(_fault_metrics_listener)
                 logger.info("  FaultEngine → MetricsCollector listener registered")
     except Exception as exc:
-        logger.debug("  Fault metrics listener: %s", exc)
+        pass
 
     # 7. Detect GPU/device capabilities
     try:
@@ -154,7 +154,7 @@ async def mlops_on_startup(
             device_info.get("gpu_memory", "N/A"),
         )
     except Exception as exc:
-        logger.debug("  Device detection: %s", exc)
+        pass
 
     logger.info("MLOps startup complete")
 
@@ -181,7 +181,7 @@ async def mlops_on_shutdown(
                 cb.force_open()
                 logger.info("  Circuit breaker opened (draining)")
     except Exception as exc:
-        logger.debug("  Circuit breaker shutdown: %s", exc)
+        pass
 
     try:
         if di_container is not None and hasattr(di_container, "resolve"):
@@ -196,7 +196,7 @@ async def mlops_on_shutdown(
                     summary.get("total_tokens", 0),
                 )
     except Exception as exc:
-        logger.debug("  Metrics flush: %s", exc)
+        pass
 
     # 3. Gracefully unload models / release GPU memory
     try:
@@ -220,7 +220,7 @@ async def mlops_on_shutdown(
         except ImportError:
             pass
     except Exception as exc:
-        logger.debug("  Model unload: %s", exc)
+        pass
 
     try:
         if di_container is not None and hasattr(di_container, "resolve"):
@@ -231,7 +231,7 @@ async def mlops_on_shutdown(
                 host.deactivate_all()
                 logger.info("  Plugins deactivated")
     except Exception as exc:
-        logger.debug("  Plugin shutdown: %s", exc)
+        pass
 
     # 5. Shutdown CacheService
     try:
@@ -243,7 +243,7 @@ async def mlops_on_shutdown(
                 await cache.shutdown()
                 logger.info("  CacheService shutdown")
     except Exception as exc:
-        logger.debug("  CacheService shutdown: %s", exc)
+        pass
 
     try:
         if di_container is not None and hasattr(di_container, "resolve"):
@@ -254,7 +254,7 @@ async def mlops_on_shutdown(
                 await registry.close()
                 logger.info("  Registry closed")
     except Exception as exc:
-        logger.debug("  Registry shutdown: %s", exc)
+        pass
 
     logger.info("MLOps shutdown complete")
 

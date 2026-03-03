@@ -1,8 +1,8 @@
 """
 Aquilia MLOps Platform
 
-Production-grade ML serving with TorchServe-class capabilities and
-FastAPI-level simplicity -- fully integrated with the Aquilia framework.
+Production-grade ML serving with TorchServe-class capabilities --
+fully integrated with the Aquilia framework.
 
 Quick start (class-based)::
 

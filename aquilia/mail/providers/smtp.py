@@ -145,7 +145,6 @@ class SMTPProvider:
             conn = await self._create_connection()
             self._pool.append(conn)
             self._pool_created[id(conn)] = time.monotonic()
-            logger.debug(f"SMTP pool pre-warmed (1/{self.pool_size})")
         except Exception as e:
             logger.warning(
                 f"SMTP pool pre-warm failed (will retry on send): {e}"

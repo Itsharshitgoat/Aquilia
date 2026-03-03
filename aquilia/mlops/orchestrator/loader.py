@@ -200,7 +200,7 @@ class ModelLoader:
                     model_version=loaded.entry.version,
                 )
             except Exception as exc:
-                logger.debug("Warmup request %d failed: %s", i, exc)
+                pass
         logger.info("Warmup complete for %s", loaded.entry.key)
 
     async def _load_model(self, entry: ModelEntry) -> LoadedModel:
@@ -236,7 +236,6 @@ class ModelLoader:
                     else:
                         load_fn(loaded_weights, entry.config.artifacts_dir, device)
                 except Exception as e:
-                    logger.debug("Persistence load failed, falling back to basic load: %s", e)
                     load_fn = instance.load
                     if inspect.iscoroutinefunction(load_fn):
                         await load_fn(entry.config.artifacts_dir, device)

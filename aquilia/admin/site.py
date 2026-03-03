@@ -258,13 +258,9 @@ class AdminSite:
 
         # Flush any @register decorators that fired before init
         flushed = flush_pending_registrations()
-        if flushed:
-            logger.debug("Flushed %d pending admin registrations", flushed)
 
         # Auto-discover remaining models
         auto = autodiscover()
-        if auto:
-            logger.debug("Auto-discovered %d models for admin", len(auto))
 
         self._initialized = True
         logger.info(
@@ -279,7 +275,6 @@ class AdminSite:
         """Register a model with its ModelAdmin configuration."""
         admin.model = model_cls
         self._registry[model_cls] = admin
-        logger.debug("Registered admin for %s", model_cls.__name__)
 
     def register(self, model_cls: Type[Model], admin_class: Optional[Type[ModelAdmin]] = None) -> None:
         """

@@ -528,7 +528,6 @@ class EffectRegistry:
         """Register an effect provider."""
         self.providers[effect_name] = provider
         self._metrics[effect_name] = {"acquires": 0, "releases": 0, "errors": 0}
-        logger.debug("Registered effect provider: %s", effect_name)
 
     def unregister(self, effect_name: str) -> Optional[EffectProvider]:
         """Unregister and return an effect provider."""
@@ -542,7 +541,6 @@ class EffectRegistry:
         for name, provider in self.providers.items():
             try:
                 await provider.initialize()
-                logger.debug("Initialized effect provider: %s", name)
             except Exception as exc:
                 logger.error("Failed to initialize effect '%s': %s", name, exc)
                 raise
@@ -553,7 +551,6 @@ class EffectRegistry:
         for name, provider in self.providers.items():
             try:
                 await provider.finalize()
-                logger.debug("Finalized effect provider: %s", name)
             except Exception as exc:
                 logger.warning("Error finalizing effect '%s': %s", name, exc)
         self._initialized = False

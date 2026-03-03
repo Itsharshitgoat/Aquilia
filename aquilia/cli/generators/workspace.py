@@ -825,8 +825,7 @@ class WorkspaceGenerator:
     def _create_starter_page(self) -> None:
         """Create a starter welcome controller that renders the Aquilia welcome page.
 
-        This gives new workspaces a default landing page visible at ``/``
-        similar to Django's rocket page or React's spinning logo.
+        This gives new workspaces a default landing page visible at ``/``.
         The page is only shown when ``debug=True`` -- in production it
         should be replaced by real routes.
         """

@@ -32,10 +32,10 @@ class ConsoleProvider:
         self.name = name
 
     async def initialize(self) -> None:
-        logger.debug("ConsoleProvider initialized")
+        pass
 
     async def shutdown(self) -> None:
-        logger.debug("ConsoleProvider shutdown")
+        pass
 
     async def send(self, envelope: MailEnvelope) -> ProviderResult:
         """Print the envelope to the console."""

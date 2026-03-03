@@ -1,8 +1,8 @@
 """
 Dep -- Composable dependency descriptor for annotation-driven DI.
 
-Aquilia's answer to FastAPI's Depends(), but built on Annotated[] and
-designed for the Aquilia provider/container ecosystem.
+Built on Annotated[] and designed for the Aquilia provider/container
+ecosystem.
 
 Usage::
 

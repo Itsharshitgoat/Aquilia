@@ -401,7 +401,6 @@ class SendGridProvider:
             response = await self._client.get(_SCOPES_ENDPOINT)
             return response.status_code == 200
         except Exception as e:
-            logger.debug(f"SendGrid health check failed: {e}")
             return False
 
     # ── Error Classification ────────────────────────────────────────

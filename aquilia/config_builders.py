@@ -55,7 +55,7 @@ class ModuleConfig:
     depends_on: List[str] = field(default_factory=list)
     tags: List[str] = field(default_factory=list)
     
-    # v2: Module encapsulation (NestJS-inspired)
+    # v2: Module encapsulation
     imports: List[str] = field(default_factory=list)   # modules this module depends on
     exports: List[str] = field(default_factory=list)   # services/components exposed to importers
     
@@ -169,7 +169,7 @@ class Module:
     
     def imports(self, *modules: str) -> "Module":
         """
-        Declare module imports (v2 -- NestJS-style encapsulation).
+        Declare module imports (v2 encapsulation).
         
         Modules listed here expose their ``exports`` to this module.
         Supersedes ``depends_on()`` for dependency declaration.
@@ -184,7 +184,7 @@ class Module:
     
     def exports(self, *components: str) -> "Module":
         """
-        Declare exported components (v2 -- NestJS-style encapsulation).
+        Declare exported components (v2 encapsulation).
         
         Only exported services/components are visible to importing modules.
         Non-exported components are module-private.

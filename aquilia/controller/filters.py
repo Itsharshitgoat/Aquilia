@@ -1,5 +1,5 @@
 """
-Aquilia Filter System -- Django-REST-style filtering, searching, and ordering.
+Aquilia Filter System -- declarative filtering, searching, and ordering.
 
 Provides declarative filter backends that integrate with Aquilia's
 Controller engine to auto-filter querysets or list data from query
@@ -374,7 +374,7 @@ class FilterSetMeta(type):
 
 class FilterSet(metaclass=FilterSetMeta):
     """
-    Declarative filter specification -- Django-REST-Framework style.
+    Declarative filter specification.
 
     Parses query parameters from the request and produces a dict of
     ``{field__lookup: coerced_value}`` clauses that can be fed directly
@@ -445,7 +445,7 @@ class FilterSet(metaclass=FilterSetMeta):
 
                 raw = self._params.get(param_key)
                 if raw is None:
-                    # Also check with Django-style double underscore in the
+                    # Also check with double underscore in the
                     # query string itself (e.g., ?price__gte=10)
                     raw = self._params.get(param_key)
                 if raw is None:

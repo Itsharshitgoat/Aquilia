@@ -1,8 +1,8 @@
 """
 Aquilia Testing - HTTP & WebSocket Test Client.
 
-Provides ``TestClient`` (like Django's ``Client`` / Starlette's ``TestClient``)
-that issues in-process ASGI requests without a running socket.
+Provides ``TestClient`` that issues in-process ASGI requests without
+a running socket.
 """
 
 from __future__ import annotations

@@ -150,14 +150,11 @@ class MailProviderRegistry:
                         if ptype is None:
                             ptype = cls.__name__.lower().replace("provider", "")
                         self._discovered[ptype] = cls
-                        logger.debug(
-                            f"Discovered mail provider: {ptype} → {cls.__qualname__}"
-                        )
                 except Exception as e:
-                    logger.debug(f"Could not scan {package}: {e}")
+                    pass
 
         except ImportError:
-            logger.debug("PackageScanner not available, skipping auto-discovery")
+            pass
 
         return self._discovered
 

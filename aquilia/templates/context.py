@@ -161,7 +161,7 @@ def inject_static_helper(context: Dict[str, Any], static_func: Any) -> None:
         {{ static('css/app.css') }}
         {{ static('js/main.js') }}
 
-    This is the Aquilia equivalent of Django's {% static %} tag.
+    This is the Aquilia equivalent of a template ``static`` tag.
 
     Args:
         context: Template context dictionary

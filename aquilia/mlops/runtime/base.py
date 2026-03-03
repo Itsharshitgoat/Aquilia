@@ -128,7 +128,6 @@ class BaseRuntime(abc.ABC):
             raise InvalidStateTransition(self._state, target)
         old = self._state
         self._state = target
-        logger.debug("Runtime state: %s → %s", old.value, target.value)
 
     # ── Properties ───────────────────────────────────────────────────
 

@@ -150,7 +150,6 @@ class LifecycleCoordinator:
         if ctx.on_startup is None:
             # No startup hook - skip
             self.started_apps.append(app_name)
-            self.logger.debug(f"  ↳ {app_name}: no startup hook")
             return
         
         self.logger.info(f"  ↳ Starting {app_name}...")
@@ -192,7 +191,6 @@ class LifecycleCoordinator:
         Does not raise exceptions - logs errors and continues cleanup.
         """
         if self.phase == LifecyclePhase.STOPPED:
-            self.logger.debug("Already stopped")
             return
         
         self.phase = LifecyclePhase.STOPPING
@@ -233,7 +231,6 @@ class LifecycleCoordinator:
         ctx = next((c for c in self.runtime.meta.app_contexts if c.name == app_name), None)
         
         if ctx is None or ctx.on_shutdown is None:
-            self.logger.debug(f"  ↳ {app_name}: no shutdown hook")
             return
         
         self.logger.info(f"  ↳ Stopping {app_name}...")

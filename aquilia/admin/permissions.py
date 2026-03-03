@@ -124,7 +124,7 @@ def get_admin_role(identity: Optional["Identity"]) -> Optional[AdminRole]:
     if "viewer" in roles:
         return AdminRole.VIEWER
 
-    # Check is_staff / is_superuser flags (Django-compat)
+    # Check is_staff / is_superuser flags
     if identity.get_attribute("is_superuser"):
         return AdminRole.SUPERADMIN
     if identity.get_attribute("is_staff"):

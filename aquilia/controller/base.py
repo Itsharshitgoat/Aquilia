@@ -90,7 +90,7 @@ class RequestCtx:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  Exception Filter -- NestJS-style
+#  Exception Filter
 # ═══════════════════════════════════════════════════════════════════════════
 
 class ExceptionFilter:
@@ -98,8 +98,7 @@ class ExceptionFilter:
     Base class for exception filters.
 
     Exception filters intercept unhandled exceptions from controller
-    handlers and convert them into proper HTTP responses.  Inspired
-    by NestJS ``ExceptionFilter``.
+    handlers and convert them into proper HTTP responses.
 
     Usage::
 
@@ -133,7 +132,7 @@ class ExceptionFilter:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  Interceptor -- NestJS-style before/after hooks
+#  Interceptor -- before/after hooks
 # ═══════════════════════════════════════════════════════════════════════════
 
 class Interceptor:

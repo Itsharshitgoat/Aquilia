@@ -6,7 +6,7 @@ Injects common variables into template context:
 - session: Active session (if available)
 - identity: Authenticated identity (if available)
 - url_for: URL generation helper
-- static: Static asset URL generator (like Django's {% static %})
+- static: Static asset URL generator
 - csrf_token: CSRF token (if available)
 - config: Safe config subset
 - csp_nonce: CSP nonce (if CSPMiddleware is active)

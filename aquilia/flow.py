@@ -981,7 +981,6 @@ class FlowPipeline:
                 resource = await provider.acquire()
                 context.effects[name] = resource
                 context.metadata["acquired_effects"].append(name)
-                self._logger.debug("Acquired effect: %s", name)
             except Exception as exc:
                 self._logger.error(
                     "Failed to acquire effect '%s': %s", name, exc,
@@ -1011,7 +1010,6 @@ class FlowPipeline:
             try:
                 provider = registry.get_provider(name)
                 await provider.release(resource, success=success)
-                self._logger.debug("Released effect: %s (success=%s)", name, success)
             except Exception as exc:
                 self._logger.warning(
                     "Failed to release effect '%s': %s", name, exc,

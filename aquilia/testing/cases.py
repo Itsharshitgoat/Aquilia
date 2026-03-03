@@ -1,7 +1,7 @@
 """
 Aquilia Testing - Test Case Base Classes.
 
-Provides Django-style test case classes with automatic server lifecycle,
+Provides test case classes with automatic server lifecycle,
 DI container management, and integrated assertion helpers.
 """
 

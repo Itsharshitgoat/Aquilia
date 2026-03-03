@@ -243,7 +243,6 @@ class CacheMiddleware:
                     ttl=self._default_ttl + self._stale_while_revalidate,
                     namespace=self._namespace,
                 )
-                logger.debug(f"Background refresh completed for {cache_key}")
         except Exception as e:
             logger.warning(f"Background cache refresh failed: {e}")
     
