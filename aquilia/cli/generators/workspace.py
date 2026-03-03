@@ -1051,57 +1051,136 @@ class WorkspaceGenerator:
         (self.path / 'requirements.txt').write_text(content)
 
     def _create_tests_dir(self) -> None:
-        """Create tests/ directory with conftest.py and an example test."""
+        """Create tests/ directory with conftest.py and example tests using aquilia.testing."""
         tests_dir = self.path / 'tests'
         tests_dir.mkdir(exist_ok=True)
 
         # __init__.py
         (tests_dir / '__init__.py').write_text("")
 
-        # conftest.py — shared test fixtures
+        # conftest.py — registers Aquilia fixtures + any workspace-level overrides
         conftest = textwrap.dedent(f'''\
             """
-            Shared test fixtures for {self.name}.
+            Shared test configuration for {self.name}.
+
+            Registers all Aquilia testing fixtures (TestServer, TestClient,
+            MockFaultEngine, MockEffectRegistry, etc.) and provides
+            workspace-level overrides.
 
             Run tests with:
+                aq test
+            Or directly:
                 pytest tests/ -v
             """
 
             import pytest
 
+            # Register all built-in Aquilia fixtures:
+            #   test_server, test_client, ws_client, fault_engine,
+            #   effect_registry, di_container, identity_factory,
+            #   mail_outbox, test_request, test_scope, settings_override
+            from aquilia.testing.fixtures import aquilia_fixtures
+            aquilia_fixtures()
+
+
+            # ── Workspace-level overrides ─────────────────────────────────────
 
             @pytest.fixture
-            def app_config():
-                """Base application configuration for tests."""
+            def app_settings():
+                """
+                Base settings applied to every test server in this workspace.
+                Override per-test via the ``settings_override`` fixture or
+                by setting ``settings = {{...}}`` on an :class:`AquiliaTestCase`.
+                """
                 return {{
-                    "name": "{self.name}",
-                    "mode": "test",
                     "debug": True,
+                    "runtime": {{"mode": "test"}},
                 }}
         ''')
 
         (tests_dir / 'conftest.py').write_text(conftest)
 
-        # Example test
-        test_content = textwrap.dedent(f'''\
+        # Smoke tests — SimpleTestCase (no server) + AquiliaTestCase (full stack)
+        test_smoke = textwrap.dedent(f'''\
             """
             Smoke tests for {self.name} workspace.
+
+            Demonstrates both testing styles available in aquilia.testing:
+            - SimpleTestCase  — pure unit tests, no server overhead
+            - AquiliaTestCase — full async test case with live TestServer
+            - pytest fixtures — functional style via aquilia_fixtures()
             """
 
+            import aquilia
+            from aquilia.testing import (
+                AquiliaTestCase,
+                SimpleTestCase,
+                TestClient,
+            )
 
-            def test_workspace_config(app_config):
-                """Verify test configuration is loaded."""
-                assert app_config["name"] == "{self.name}"
-                assert app_config["mode"] == "test"
+
+            # ── Unit-style tests (no server) ──────────────────────────────────
+
+            class TestWorkspace(SimpleTestCase):
+                """Verify the workspace boots without errors."""
+
+                def test_aquilia_importable(self):
+                    """Aquilia framework must be importable."""
+                    self.assertIsNotNone(aquilia.__version__)
+
+                def test_aquilia_version_is_string(self):
+                    self.assertIsInstance(aquilia.__version__, str)
 
 
-            def test_aquilia_importable():
-                """Verify Aquilia framework is installed."""
-                import aquilia
-                assert hasattr(aquilia, "__version__")
+            # ── Integration-style tests (full server lifecycle) ───────────────
+
+            class TestSmoke(AquiliaTestCase):
+                """
+                End-to-end smoke tests against a live TestServer.
+
+                ``self.client`` is a :class:`TestClient` pre-wired to the server.
+                Add your manifests via ``manifests = [my_manifest]``.
+                """
+
+                settings = {{"debug": True}}
+
+                async def test_health_endpoint(self):
+                    """Built-in /health endpoint must return 200."""
+                    resp = await self.client.get("/health")
+                    self.assert_status(resp, 200)
+
+                async def test_response_is_json(self):
+                    """Health response should be valid JSON."""
+                    resp = await self.client.get("/health")
+                    self.assert_json(resp)
+
+
+            # ── Pytest-fixture style tests ────────────────────────────────────
+
+            async def test_health_with_fixture(test_client):
+                """
+                Same smoke test using the ``test_client`` pytest fixture.
+
+                Registered automatically by ``aquilia_fixtures()`` in conftest.py.
+                """
+                resp = await test_client.get("/health")
+                assert resp.status_code == 200
+
+
+            async def test_fault_engine_captures(test_server, fault_engine):
+                """MockFaultEngine records faults for assertion in tests."""
+                fault_engine.raise_on_next("not_found", message="Resource missing")
+                assert fault_engine.has_pending()
+
+
+            async def test_settings_override(test_client, settings_override):
+                """settings_override context manager lets you flip config mid-test."""
+                with settings_override(debug=False):
+                    resp = await test_client.get("/health")
+                    assert resp.status_code == 200
         ''')
 
-        (tests_dir / 'test_smoke.py').write_text(test_content)
+        (tests_dir / 'test_smoke.py').write_text(test_smoke)
 
     def _create_makefile(self) -> None:
         """Create Makefile with common development commands."""
@@ -1130,10 +1209,10 @@ class WorkspaceGenerator:
             # ── Testing ───────────────────────────────────────────────────────
 
             test: ## Run all tests
-            \t$(PYTHON) -m pytest tests/ -v
+            \taq test
 
             test-cov: ## Run tests with coverage
-            \t$(PYTHON) -m pytest tests/ --cov=$(APP) --cov-report=term-missing
+            \taq test --coverage
 
             # ── Database ──────────────────────────────────────────────────────
 
