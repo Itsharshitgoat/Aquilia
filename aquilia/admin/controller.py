@@ -1082,10 +1082,10 @@ class AdminController(Controller):
         self._ensure_initialized()
 
         # Pagination params
-        qs = request.query or {}
         try:
+            qs = request.query_params
             page = max(1, int(qs.get("page", 1)))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, AttributeError):
             page = 1
         per_page = 50
         offset = (page - 1) * per_page

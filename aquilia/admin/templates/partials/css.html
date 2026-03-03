@@ -284,6 +284,19 @@ a { color: inherit; text-decoration: none; transition: color 0.15s var(--ease); 
 .topbar-breadcrumb .sep { color: var(--text-faint); font-size: 0.7rem; }
 .topbar-breadcrumb .current { color: var(--text-primary); font-weight: 500; }
 .topbar-right { display: flex; align-items: center; gap: 8px; }
+.topbar-profile-wrap { position: relative; }
+.topbar-profile-btn { display: flex; align-items: center; gap: 6px; background: none; border: 1px solid var(--border-color); border-radius: 20px; padding: 4px 10px 4px 4px; cursor: pointer; transition: background .15s, border-color .15s; font-family: var(--font-sans); color: var(--text-primary); }
+.topbar-profile-btn:hover { background: var(--bg-surface-hover); border-color: var(--accent); }
+.topbar-avatar { width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), #059669); display: flex; align-items: center; justify-content: center; font-size: .72rem; font-weight: 700; color: #fff; overflow: hidden; flex-shrink: 0; }
+.topbar-avatar-lg { width: 38px; height: 38px; font-size: .9rem; }
+.topbar-dropdown { display: none; position: absolute; right: 0; top: calc(100% + 8px); min-width: 210px; background: var(--bg-elevated); border: 1px solid var(--border-color); border-radius: 12px; padding: 6px; box-shadow: 0 12px 40px rgba(0,0,0,0.45); z-index: 9999; animation: scaleIn .15s ease; }
+.topbar-dropdown.open { display: block; }
+.topbar-dropdown-header { display: flex; align-items: center; gap: 10px; padding: 10px 10px 12px; }
+.topbar-dropdown-divider { height: 1px; background: var(--border-subtle); margin: 4px 0; }
+.topbar-dropdown-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: .82rem; color: var(--text-secondary); text-decoration: none; transition: background .12s, color .12s; cursor: pointer; }
+.topbar-dropdown-item:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+.topbar-dropdown-danger { color: var(--danger) !important; }
+.topbar-dropdown-danger:hover { background: rgba(239,68,68,.1) !important; }
 .admin-content { max-width: 1200px; padding: 32px 32px 64px; }
 
 /* ═══ PAGE HEADER ═════════════════════════════════════════════ */

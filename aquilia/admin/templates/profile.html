@@ -158,8 +158,9 @@
             <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:16px;">
                 Irreversible actions. Proceed with caution.
             </p>
+            {% set logout_url = (url_prefix if url_prefix else '/admin') + '/logout' %}
             <div style="display:flex;gap:12px;flex-wrap:wrap;">
-                <button class="btn btn-secondary" onclick="showConfirmModal('Logout All Sessions?','This will invalidate all active sessions. You will need to log in again.',function(){ window.location.href='{{ url_prefix|default(\"/admin\") }}/logout'; })">
+                <button class="btn btn-secondary" onclick="showConfirmModal('Logout All Sessions?','This will invalidate all active sessions. You will need to log in again.',function(){ window.location.href='{{ logout_url }}'; })">
                     Logout All Sessions
                 </button>
             </div>
@@ -203,15 +204,20 @@ function handleAvatarUpload(input) {
     }
 }
 
-// Restore avatar from localStorage
+// Restore avatar from localStorage, or show mock avatar
 (function() {
     try {
+        var avatar = document.getElementById('profileAvatar');
+        if (!avatar) return;
         var saved = localStorage.getItem('aquilia-admin-avatar');
+        var uploadBtn = '<label class="profile-avatar-upload" for="avatarInput" title="Change avatar"><i class="icon-camera"></i></label><input type="file" id="avatarInput" accept="image/*" style="display:none;" onchange="handleAvatarUpload(this)">';
         if (saved) {
-            var avatar = document.getElementById('profileAvatar');
-            if (avatar) {
-                avatar.innerHTML = '<img src="' + saved + '" alt="Avatar"><label class="profile-avatar-upload" for="avatarInput" title="Change avatar"><i class="icon-camera"></i></label><input type="file" id="avatarInput" accept="image/*" style="display:none;" onchange="handleAvatarUpload(this)">';
-            }
+            avatar.innerHTML = '<img src="' + saved + '" alt="Avatar">' + uploadBtn;
+        } else {
+            // Use DiceBear Initials as placeholder
+            var username = encodeURIComponent('{{ user.username }}');
+            var mockUrl = 'https://api.dicebear.com/9.x/initials/svg?seed=' + username + '&backgroundColor=22c55e&fontFamily=Outfit&fontSize=38&fontWeight=600';
+            avatar.innerHTML = '<img src="' + mockUrl + '" alt="Avatar">' + uploadBtn;
         }
     } catch(ex) {}
 })();
