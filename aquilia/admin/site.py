@@ -263,11 +263,6 @@ class AdminSite:
         auto = autodiscover()
 
         self._initialized = True
-        logger.info(
-            "AdminSite '%s' initialized with %d models",
-            self.name,
-            len(self._registry),
-        )
 
     # ── Registration ─────────────────────────────────────────────────
 

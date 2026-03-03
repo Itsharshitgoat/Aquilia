@@ -136,12 +136,6 @@ def autodiscover() -> Dict[str, Type[Model]]:
         site.register_admin(model_cls, admin_instance)
         auto_registered[name] = model_cls
 
-    logger.info(
-        "Admin autodiscover complete: %d models auto-registered, %d total",
-        len(auto_registered),
-        len(site._registry),
-    )
-
     return auto_registered
 
 

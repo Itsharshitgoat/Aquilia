@@ -199,7 +199,6 @@ class AquilaSockets:
         """Initialize runtime."""
         await self.adapter.initialize()
         self._initialized = True
-        logger.info("AquilaSockets initialized")
     
     async def shutdown(self):
         """Shutdown runtime."""

@@ -114,7 +114,6 @@ class CacheService:
             await self._backend.initialize()
             self._initialized = True
             self._healthy = True
-            logger.info(f"Cache service initialized (backend={self._backend.name})")
             
             # Start health check loop
             if self._config.health_check_interval > 0:

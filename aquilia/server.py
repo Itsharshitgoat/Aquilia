@@ -70,7 +70,6 @@ class AquiliaServer:
         """
         self.config = config or ConfigLoader()
         self.logger = logging.getLogger("aquilia.server")
-        self.logger.info("Initializing AquiliaServer...")
         self.mode = mode
         
         # v2: Health registry for subsystem tracking
@@ -1118,10 +1117,6 @@ class AquiliaServer:
             
             self._apply_dev_cookie_override(transport)
 
-            self.logger.info(
-                f"SessionEngine initialized (Integration format): policy={policy.name}, "
-                f"store={type(store).__name__}, transport={type(transport).__name__}"
-            )
             return SessionEngine(policy=policy, store=store, transport=transport)
         
         # ── Format 2: Workspace.sessions(policies=[...]) -- policy list (plural) ──
@@ -1171,12 +1166,6 @@ class AquiliaServer:
             self._apply_dev_cookie_override(transport)
             
             engine = SessionEngine(policy=policy, store=store, transport=transport)
-            
-            self.logger.info(
-                f"SessionEngine initialized (Workspace format): policy={policy.name}, "
-                f"store={type(store).__name__} (from store_name='{store_name}'), "
-                f"transport={type(transport).__name__} (adapter='{policy.transport.adapter}')"
-            )
             
             return engine
         
@@ -1236,11 +1225,6 @@ class AquiliaServer:
             policy=policy,
             store=store,
             transport=transport,
-        )
-        
-        self.logger.info(
-            f"SessionEngine initialized (dict format): policy={policy.name}, "
-            f"store={type(store).__name__}, transport={type(transport).__name__}"
         )
         
         return engine
@@ -1394,12 +1378,6 @@ class AquiliaServer:
                     # Register with controller router
                     self.controller_router.add_controller(compiled)
                     compiled_controllers.append(compiled)
-                    
-                    self.logger.info(
-                        f"Loaded controller {controller_class.__name__} "
-                        f"from {app_ctx.name} with {len(compiled.routes)} routes "
-                        f"(mount: {route_prefix or '/'})"
-                    )
                 
                 except Exception as e:
                     self.logger.error(
@@ -1424,9 +1402,7 @@ class AquiliaServer:
             raise RuntimeError(f"Found {len(conflicts)} route conflicts. check logs.")
 
         # Step 1.2: Initialize WebSocket runtime and load socket controllers
-        self.logger.info("Initializing WebSocket runtime...")
         await self.aquila_sockets.initialize()
-        self.logger.info("Loading socket controllers...")
         await self._load_socket_controllers()
 
         # Initialize controller router
@@ -1539,13 +1515,6 @@ class AquiliaServer:
         # already been called during _load_controllers().
         self.controller_router._initialized = False
         self.controller_router.initialize()
-
-        self.logger.info(
-            f"Registered documentation routes: "
-            f"{openapi_config.docs_path} (Swagger UI) | "
-            f"{openapi_config.redoc_path} (ReDoc) | "
-            f"{openapi_config.openapi_json_path} (JSON)"
-        )
 
     def _wire_admin_integration(self):
         """
@@ -1707,11 +1676,6 @@ class AquiliaServer:
             # directory we inject it automatically.
             self._ensure_admin_static_assets()
 
-            self.logger.info(
-                f"Admin integration wired: {registered_count} routes at {url_prefix}/ "
-                f"(site: {site_title!r})"
-            )
-
         except ImportError as e:
             self.logger.warning(f"Admin integration skipped -- missing dependency: {e}")
         except Exception as e:
@@ -1805,10 +1769,6 @@ class AquiliaServer:
             fb_list = fallbacks.setdefault("/static", [])
             if assets_dir not in fb_list:
                 fb_list.append(assets_dir)
-                self.logger.info(
-                    f"Added {assets_dir} as fallback for /static "
-                    f"(admin assets)"
-                )
             return
 
         # No static middleware exists -- install a minimal one
@@ -1933,7 +1893,6 @@ class AquiliaServer:
                     instance.adapter = self.aquila_sockets.adapter
                         
                     self.aquila_sockets.controller_instances[namespace] = instance
-                    self.logger.info(f"Loaded socket controller {cls.__name__} at {namespace}")
                     
                 except Exception as e:
                     self.logger.error(
@@ -2022,10 +1981,6 @@ class AquiliaServer:
                     for route in compiled.routes:
                         route.app_name = "__starter__"
                     self.controller_router.add_controller(compiled)
-                    self.logger.info(
-                        f"Loaded starter controller {obj.__name__} "
-                        f"with {len(compiled.routes)} routes"
-                    )
                     return compiled
 
         except Exception as e:
@@ -2181,10 +2136,6 @@ class AquiliaServer:
         py_files = [f for f in model_files if f.suffix == ".py"]
 
         total_count = len(amdl_files) + len(py_files)
-        if total_count > 0:
-            self.logger.info(f"Found {total_count} model file(s), registering models...")
-        else:
-            pass
 
         # ── Phase 2a: Parse and register AMDL (legacy) ────────────────────
         legacy_registry = getattr(self.runtime, '_model_registry', None) or LegacyRegistry()
@@ -2346,14 +2297,12 @@ class AquiliaServer:
                     await legacy_registry.create_tables()
                 if ModelRegistry._models:
                     await ModelRegistry.create_tables()
-                self.logger.info("Model tables auto-created")
 
             if auto_migrate:
                 try:
                     from .models.migrations import MigrationRunner
                     runner = MigrationRunner(db, migrations_dir)
                     await runner.migrate()
-                    self.logger.info("Migrations applied")
                 except Exception as e:
                     self.logger.warning(f"Auto-migration failed: {e}")
 
@@ -2389,11 +2338,6 @@ class AquiliaServer:
                     except (ValueError, Exception):
                         pass
 
-            model_total = amdl_count + py_count
-            self.logger.info(
-                f"Models registered: "
-                f"{model_total} model(s) ({amdl_count} AMDL + {py_count} Python), DB={db.driver}"
-            )
         else:
             self._amdl_database = None
 
@@ -2427,8 +2371,6 @@ class AquiliaServer:
                 return
             
             _boot_t0 = _time.monotonic()
-
-            self.logger.info("Starting Aquilia server...")
             
             # Step 0: Perform runtime auto-discovery
             self.runtime.perform_autodiscovery()
@@ -2481,8 +2423,6 @@ class AquiliaServer:
                 # Wire effect registry into controller engine for FlowPipeline
                 if hasattr(self, 'controller_engine') and self.controller_engine:
                     self.controller_engine.effect_registry = effect_registry
-
-                self.logger.info(f"Effect providers initialized ({len(effect_registry.providers)} registered)")
             except Exception as e:
                 self._effect_registry = None
             
@@ -2490,35 +2430,21 @@ class AquiliaServer:
             if hasattr(self, '_cache_service') and self._cache_service is not None:
                 try:
                     await self._cache_service.initialize()
-                    self.logger.info("Cache backend connected")
                 except Exception as e:
                     self.logger.error(f"Cache startup failed: {e}")
                     # Non-fatal -- app can run without cache
 
-            # Step 4: Log registered routes
+            # Step 4: Gather route/service counts for health registration
             routes = self.controller_router.get_routes()
-            if routes:
-                self.logger.info(f"Registered {len(routes)} controller routes:")
-                for route in routes[:10]:  # Show first 10
-                    self.logger.info(
-                        f"  {route.get('method', 'GET'):7} "
-                        f"{route.get('path', '/'):30} "
-                        f"-> {route.get('handler', 'unknown')}"
-                    )
-                if len(routes) > 10:
-                    self.logger.info(f"  ... and {len(routes) - 10} more")
             
-            # Log DI container information
             total_services = sum(
                 len(container._providers)
                 for container in self.runtime.di_containers.values()
             )
-            self.logger.info(f"DI containers: {len(self.runtime.di_containers)} apps, {total_services} services")
             
             # Mark startup complete
             self._startup_complete = True
             _startup_ms = (_time.monotonic() - _boot_t0) * 1000
-            self.logger.info(f"Server startup completed in {_startup_ms:.0f}ms")
 
             # v2: Register subsystem health statuses
             self.health_registry.register("aquilary", HealthStatus(
@@ -2542,9 +2468,7 @@ class AquiliaServer:
                     name="mail", status=SubsystemStatus.HEALTHY,
                 ))
 
-            self.logger.info(f"Server ready with {len(self.runtime.meta.app_contexts)} apps ({_startup_ms:.0f}ms)")
-            overall = self.health_registry.overall()
-            self.logger.info(f"Health: {overall.status.value} -- {overall.message}")
+
     
     async def shutdown(self):
         """

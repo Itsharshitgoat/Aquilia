@@ -179,7 +179,6 @@ class AquiliaDatabase:
                     await self._adapter.connect(self._url, **self._options)
                     self._connected = True
                     self._last_activity = time.monotonic()
-                    logger.info(f"Database connected ({self._driver}), attempt {attempt}")
                     return
                 except (DatabaseConnectionFault, ImportError):
                     raise

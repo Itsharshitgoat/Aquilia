@@ -82,7 +82,6 @@ class SQLiteAdapter(DatabaseAdapter):
             await self._connection.execute("PRAGMA foreign_keys=ON")
             self._connection.row_factory = aiosqlite.Row
             self._connected = True
-            logger.info(f"SQLite connected: {db_path}")
 
     async def disconnect(self) -> None:
         if not self._connected:

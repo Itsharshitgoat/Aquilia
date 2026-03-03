@@ -47,7 +47,6 @@ class InMemoryAdapter(Adapter):
     async def initialize(self) -> None:
         """Initialize adapter."""
         self._initialized = True
-        logger.info("InMemoryAdapter initialized")
     
     async def shutdown(self) -> None:
         """Shutdown adapter."""

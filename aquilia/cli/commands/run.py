@@ -1075,11 +1075,6 @@ server = AquiliaServer(
 # 6. ASGI application export
 # ────────────────────────────────────────────────────────────────────────
 app = server.app
-
-_logger.info(
-    "Aquilia runtime ready  ·  workspace=%s  ·  mode=%s  ·  modules=%d",
-    "{workspace_name}", "{mode}", len(_manifests),
-)
 '''
 
     return code

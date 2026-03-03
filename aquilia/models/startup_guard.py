@@ -101,7 +101,6 @@ def check_db_ready(
             )
             return False
 
-    logger.info("Database ready -- all migrations applied")
     return True
 
 

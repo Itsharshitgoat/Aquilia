@@ -100,13 +100,10 @@ class LifecycleCoordinator:
         self.phase = LifecyclePhase.STARTING
         self._emit_event(LifecycleEvent(LifecyclePhase.STARTING))
         
-        self.logger.info("Starting application lifecycle...")
-        
         try:
             # 1. Execute global workspace-level startup hook if present
             global_startup = self.config.get("on_startup") if self.config else None
             if global_startup:
-                self.logger.info("Executing global workspace startup hook...")
                 hook = self._resolve_hook(global_startup)
                 if hook:
                     if inspect.iscoroutinefunction(hook):
@@ -121,7 +118,6 @@ class LifecycleCoordinator:
             
             self.phase = LifecyclePhase.READY
             self._emit_event(LifecycleEvent(LifecyclePhase.READY))
-            self.logger.info(f"All apps started successfully ({len(self.started_apps)} apps)")
         
         except Exception as e:
             self.phase = LifecyclePhase.ERROR
