@@ -8,7 +8,6 @@ Production-grade artifact freeze using the Aquilia Build Pipeline.
 """
 
 import hashlib
-import json
 from pathlib import Path
 from typing import Optional
 
@@ -101,8 +100,12 @@ def freeze_artifacts(
         'format': 'crous-binary',
     }
 
-    frozen_path = artifacts_dir / 'frozen.json'
-    frozen_path.write_text(json.dumps(frozen_meta, indent=2))
+    frozen_path = artifacts_dir / 'frozen.crous'
+    try:
+        import _crous_native as _cb
+    except ImportError:
+        import crous as _cb
+    frozen_path.write_bytes(_cb.encode(frozen_meta))
 
     if verbose:
         print(f"  Frozen manifest: {frozen_path}")

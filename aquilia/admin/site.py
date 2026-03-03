@@ -550,7 +550,7 @@ class AdminSite:
         Gather build information from Crous artifacts in the build directory.
 
         Scans the workspace build/ directory for .crous files and
-        bundle.manifest.json, returning artifact metadata.
+        bundle.manifest.crous, returning artifact metadata.
         """
         import os
 
@@ -567,11 +567,14 @@ class AdminSite:
             return result
 
         # Read bundle manifest if it exists
-        manifest_path = build_dir / "bundle.manifest.json"
+        manifest_path = build_dir / "bundle.manifest.crous"
         if manifest_path.exists():
             try:
-                import json
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                try:
+                    import _crous_native as _cb
+                except ImportError:
+                    import crous as _cb
+                manifest = _cb.decode(manifest_path.read_bytes())
                 result["info"] = {
                     "workspace_name": manifest.get("workspace_name", ""),
                     "workspace_version": manifest.get("workspace_version", ""),
@@ -704,7 +707,7 @@ class AdminSite:
         # Also scan for other build files (non-.crous)
         result["build_files"] = []
         for fpath in sorted(build_dir.iterdir()):
-            if fpath.is_file() and fpath.suffix != ".crous" and fpath.name != "bundle.manifest.json":
+            if fpath.is_file() and fpath.suffix != ".crous":
                 try:
                     content = fpath.read_text(encoding="utf-8")
                     result["build_files"].append({
