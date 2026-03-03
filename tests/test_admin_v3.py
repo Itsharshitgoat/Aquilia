@@ -4844,6 +4844,68 @@ class TestMonitoringDataCollector:
         serialized = json.dumps(data, default=str)
         assert len(serialized) > 100
 
+    def test_get_monitoring_data_gc_generations(self):
+        """gc_generations should be a list of dicts with collection stats."""
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        data = site.get_monitoring_data()
+        gens = data["python"]["gc_generations"]
+        assert isinstance(gens, list)
+        assert len(gens) == 3  # CPython always has 3 generations
+        for g in gens:
+            assert "generation" in g
+            assert "collections" in g
+            assert isinstance(g["collections"], int)
+
+    def test_get_monitoring_data_gc_enabled(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        data = site.get_monitoring_data()
+        assert "gc_enabled" in data["python"]
+        assert isinstance(data["python"]["gc_enabled"], bool)
+
+    def test_get_monitoring_data_gc_frozen(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        data = site.get_monitoring_data()
+        assert "gc_frozen" in data["python"]
+        assert isinstance(data["python"]["gc_frozen"], int)
+
+    def test_get_monitoring_data_loaded_modules(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        data = site.get_monitoring_data()
+        assert "loaded_modules" in data["python"]
+        assert isinstance(data["python"]["loaded_modules"], int)
+        assert data["python"]["loaded_modules"] > 0
+
+    def test_get_monitoring_data_active_threads(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        data = site.get_monitoring_data()
+        assert "active_threads" in data["python"]
+        assert isinstance(data["python"]["active_threads"], int)
+        assert data["python"]["active_threads"] >= 1
+
+    def test_get_monitoring_data_recursion_limit(self):
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        data = site.get_monitoring_data()
+        assert "recursion_limit" in data["python"]
+        assert isinstance(data["python"]["recursion_limit"], int)
+        assert data["python"]["recursion_limit"] > 0
+
+    def test_get_monitoring_data_io_counters(self):
+        """Process I/O counter fields should be present."""
+        from aquilia.admin.site import AdminSite
+        site = AdminSite()
+        data = site.get_monitoring_data()
+        proc = data["process"]
+        assert "io_read_count" in proc
+        assert "io_write_count" in proc
+        assert "io_read_bytes_human" in proc
+        assert "io_write_bytes_human" in proc
+
 
 class TestMonitoringRoute:
     """Controller should have the monitoring routes wired up."""

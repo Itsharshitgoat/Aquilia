@@ -717,8 +717,11 @@ class AdminSite:
             - memory: total, used, available, percent, swap_*
             - disk: total, used, free, percent, partitions
             - network: bytes_sent/recv, packets, errors, connections
-            - process: pid, name, status, uptime, threads, rss, vms, fds
-            - python: version, implementation, executable, gc_objects
+            - process: pid, name, status, uptime, threads, rss, vms,
+              fds, io_read/write_count/bytes
+            - python: version, implementation, executable, gc_objects,
+              gc_generations, gc_enabled, gc_frozen, loaded_modules,
+              active_threads, recursion_limit, allocator_blocks
             - system: os, platform, arch, hostname
             - health_checks: list from HealthRegistry
         """
@@ -749,11 +752,37 @@ class AdminSite:
         }
 
         # ── Python runtime ──
+        gc_gens = []
+        try:
+            for i, stats in enumerate(gc.get_stats()):
+                gc_gens.append({
+                    "generation": i,
+                    "collections": stats.get("collections", 0),
+                    "collected": stats.get("collected", 0),
+                    "uncollectable": stats.get("uncollectable", 0),
+                })
+        except Exception:
+            pass
+
+        try:
+            gc_frozen = gc.get_freeze_count()
+        except (AttributeError, TypeError):
+            gc_frozen = 0
+
+        import threading
+
         result["python"] = {
             "version": platform.python_version(),
             "implementation": platform.python_implementation(),
             "executable": sys.executable,
             "gc_objects": len(gc.get_objects()),
+            "gc_generations": gc_gens,
+            "gc_enabled": gc.isenabled(),
+            "gc_frozen": gc_frozen,
+            "loaded_modules": len(sys.modules),
+            "active_threads": threading.active_count(),
+            "recursion_limit": sys.getrecursionlimit(),
+            "allocator_blocks": "—",
         }
 
         # ── psutil-based metrics ──
@@ -949,6 +978,25 @@ class AdminSite:
                 "env_snapshot": self._safe_env_snapshot(),
             }
 
+            # I/O counters (platform-specific; may raise AccessDenied)
+            try:
+                io_counters = proc.io_counters()
+                result["process"]["io_read_count"] = io_counters.read_count
+                result["process"]["io_write_count"] = io_counters.write_count
+                result["process"]["io_read_bytes"] = io_counters.read_bytes
+                result["process"]["io_read_bytes_human"] = self._fmt_bytes(
+                    io_counters.read_bytes,
+                )
+                result["process"]["io_write_bytes"] = io_counters.write_bytes
+                result["process"]["io_write_bytes_human"] = self._fmt_bytes(
+                    io_counters.write_bytes,
+                )
+            except (psutil.AccessDenied, AttributeError, OSError):
+                result["process"]["io_read_count"] = "—"
+                result["process"]["io_write_count"] = "—"
+                result["process"]["io_read_bytes_human"] = "—"
+                result["process"]["io_write_bytes_human"] = "—"
+
         except ImportError:
             # psutil not available — provide minimal data
             result["cpu"] = {
@@ -989,6 +1037,8 @@ class AdminSite:
                 "mem_percent": 0, "ctx_switches": 0,
                 "ctx_switches_voluntary": 0, "ctx_switches_involuntary": 0,
                 "env_snapshot": self._safe_env_snapshot(),
+                "io_read_count": "—", "io_write_count": "—",
+                "io_read_bytes_human": "—", "io_write_bytes_human": "—",
             }
 
         # ── Health checks ──
