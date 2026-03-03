@@ -2219,10 +2219,17 @@ class TestNewControllerHandlers:
     """Each new handler returns 302 (unauth) or 200 (auth)."""
 
     def setup_method(self):
-        from aquilia.admin.site import AdminSite
+        from aquilia.admin.site import AdminSite, AdminConfig
         AdminSite.reset()
         self.site = AdminSite()
         self.site.register(_ProductModel)
+        # Enable all modules (monitoring & audit are disabled by default since v2)
+        self.site.admin_config = AdminConfig(modules={
+            "dashboard": True, "orm": True, "build": True,
+            "migrations": True, "config": True, "workspace": True,
+            "permissions": True, "monitoring": True, "admin_users": True,
+            "profile": True, "audit": True,
+        }, audit_enabled=True, monitoring_enabled=True)
         self.ctrl = AdminController(site=self.site)
 
     def _ctx(self, identity=None, qp=None):
@@ -4949,12 +4956,25 @@ class TestMonitoringSidebar:
         assert "/monitoring/" in content
 
     def test_sidebar_monitoring_appears_on_dashboard(self):
-        """Monitoring link should appear on every page that renders the sidebar."""
-        html = render_dashboard(
-            app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
-            identity_name="admin",
-        )
-        assert "/admin/monitoring/" in html
+        """Monitoring link should appear when monitoring is enabled."""
+        from aquilia.admin.site import AdminSite, AdminConfig
+        # Must configure the default singleton since _render_template reads it
+        AdminSite.reset()
+        site = AdminSite.default()
+        site.admin_config = AdminConfig(modules={
+            "dashboard": True, "orm": True, "build": True,
+            "migrations": True, "config": True, "workspace": True,
+            "permissions": True, "monitoring": True, "admin_users": True,
+            "profile": True, "audit": True,
+        })
+        try:
+            html = render_dashboard(
+                app_list=[], stats={"total_models": 0, "model_counts": {}, "recent_actions": []},
+                identity_name="admin",
+            )
+            assert "/admin/monitoring/" in html
+        finally:
+            AdminSite.reset()
 
     def test_monitoring_template_exists(self):
         from pathlib import Path
@@ -5205,10 +5225,13 @@ class TestAdminConfigDataclass:
     def test_default_all_modules_enabled(self):
         from aquilia.admin.site import AdminConfig
         cfg = AdminConfig()
+        # Modules enabled by default
         for mod in ("dashboard", "orm", "build", "migrations", "config",
-                     "workspace", "permissions", "monitoring", "admin_users",
-                     "profile", "audit"):
+                     "workspace", "permissions", "admin_users", "profile"):
             assert cfg.is_module_enabled(mod), f"{mod} should be enabled by default"
+        # Monitoring and audit are disabled by default
+        assert cfg.is_module_enabled("monitoring") is False
+        assert cfg.is_module_enabled("audit") is False
 
     def test_is_module_enabled_normalises_dashes(self):
         from aquilia.admin.site import AdminConfig
@@ -5236,15 +5259,19 @@ class TestAdminConfigDataclass:
     def test_audit_action_filtering_defaults(self):
         from aquilia.admin.site import AdminConfig
         from aquilia.admin.audit import AdminAction
+        # With audit disabled (default), all actions are blocked
         cfg = AdminConfig()
-        # All actions allowed by default
         for action in AdminAction:
-            assert cfg.is_action_allowed(action), f"{action} should be allowed by default"
+            assert cfg.is_action_allowed(action) is False, f"{action} should be blocked when audit disabled"
+        # With audit explicitly enabled, all actions are allowed
+        cfg_on = AdminConfig(audit_enabled=True)
+        for action in AdminAction:
+            assert cfg_on.is_action_allowed(action), f"{action} should be allowed when audit enabled"
 
     def test_audit_excluded_actions(self):
         from aquilia.admin.site import AdminConfig
         from aquilia.admin.audit import AdminAction
-        cfg = AdminConfig(audit_excluded_actions=frozenset({"VIEW", "LIST"}))
+        cfg = AdminConfig(audit_enabled=True, audit_excluded_actions=frozenset({"VIEW", "LIST"}))
         assert cfg.is_action_allowed(AdminAction.VIEW) is False
         assert cfg.is_action_allowed(AdminAction.LIST) is False
         assert cfg.is_action_allowed(AdminAction.CREATE) is True
@@ -5253,7 +5280,7 @@ class TestAdminConfigDataclass:
     def test_audit_log_logins_switch(self):
         from aquilia.admin.site import AdminConfig
         from aquilia.admin.audit import AdminAction
-        cfg = AdminConfig(audit_log_logins=False)
+        cfg = AdminConfig(audit_enabled=True, audit_log_logins=False)
         assert cfg.is_action_allowed(AdminAction.LOGIN) is False
         assert cfg.is_action_allowed(AdminAction.LOGOUT) is False
         assert cfg.is_action_allowed(AdminAction.LOGIN_FAILED) is False
@@ -5262,7 +5289,7 @@ class TestAdminConfigDataclass:
     def test_audit_log_views_switch(self):
         from aquilia.admin.site import AdminConfig
         from aquilia.admin.audit import AdminAction
-        cfg = AdminConfig(audit_log_views=False)
+        cfg = AdminConfig(audit_enabled=True, audit_log_views=False)
         assert cfg.is_action_allowed(AdminAction.VIEW) is False
         assert cfg.is_action_allowed(AdminAction.LIST) is False
         assert cfg.is_action_allowed(AdminAction.SEARCH) is True  # Separate switch
@@ -5270,7 +5297,7 @@ class TestAdminConfigDataclass:
     def test_audit_log_searches_switch(self):
         from aquilia.admin.site import AdminConfig
         from aquilia.admin.audit import AdminAction
-        cfg = AdminConfig(audit_log_searches=False)
+        cfg = AdminConfig(audit_enabled=True, audit_log_searches=False)
         assert cfg.is_action_allowed(AdminAction.SEARCH) is False
         assert cfg.is_action_allowed(AdminAction.VIEW) is True
 
@@ -5316,15 +5343,16 @@ class TestAdminConfigDataclass:
         assert "sidebar_sections" in d
         assert d["theme"] == "auto"
         assert d["list_per_page"] == 25
-        assert d["audit"]["enabled"] is True
+        assert d["audit"]["enabled"] is False
         assert "cpu" in d["monitoring"]["metrics"]
 
     def test_from_dict_default(self):
         from aquilia.admin.site import AdminConfig
         cfg = AdminConfig.from_dict({})
         assert cfg.is_module_enabled("dashboard") is True
-        assert cfg.audit_enabled is True
-        assert cfg.monitoring_enabled is True
+        # Audit and monitoring disabled by default
+        assert cfg.audit_enabled is False
+        assert cfg.monitoring_enabled is False
 
     def test_from_dict_with_modules(self):
         from aquilia.admin.site import AdminConfig
@@ -5355,6 +5383,434 @@ class TestAdminConfigDataclass:
         cfg = AdminConfig.from_dict({"enable_audit": False})
         assert cfg.audit_enabled is False
         assert cfg.is_module_enabled("audit") is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# NESTED BUILDER CLASSES — AdminModules, AdminAudit, AdminMonitoring, AdminSidebar
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestAdminModulesBuilder:
+    """Test Integration.AdminModules fluent builder."""
+
+    def test_import(self):
+        from aquilia.config_builders import Integration
+        assert hasattr(Integration, "AdminModules")
+
+    def test_defaults(self):
+        from aquilia.config_builders import Integration
+        m = Integration.AdminModules()
+        d = m.to_dict()
+        assert d["dashboard"] is True
+        assert d["orm"] is True
+        assert d["monitoring"] is False
+        assert d["audit"] is False
+
+    def test_enable_monitoring(self):
+        from aquilia.config_builders import Integration
+        m = Integration.AdminModules().enable_monitoring()
+        assert m.to_dict()["monitoring"] is True
+
+    def test_disable_dashboard(self):
+        from aquilia.config_builders import Integration
+        m = Integration.AdminModules().disable_dashboard()
+        assert m.to_dict()["dashboard"] is False
+
+    def test_enable_all(self):
+        from aquilia.config_builders import Integration
+        m = Integration.AdminModules().enable_all()
+        d = m.to_dict()
+        for key, val in d.items():
+            assert val is True, f"{key} should be True after enable_all()"
+
+    def test_disable_all(self):
+        from aquilia.config_builders import Integration
+        m = Integration.AdminModules().disable_all()
+        d = m.to_dict()
+        for key, val in d.items():
+            assert val is False, f"{key} should be False after disable_all()"
+
+    def test_fluent_chain(self):
+        from aquilia.config_builders import Integration
+        m = (Integration.AdminModules()
+             .disable_all()
+             .enable_dashboard()
+             .enable_orm()
+             .enable_monitoring())
+        d = m.to_dict()
+        assert d["dashboard"] is True
+        assert d["orm"] is True
+        assert d["monitoring"] is True
+        assert d["build"] is False
+        assert d["audit"] is False
+
+    def test_repr(self):
+        from aquilia.config_builders import Integration
+        r = repr(Integration.AdminModules())
+        assert "AdminModules" in r
+
+
+class TestAdminAuditBuilder:
+    """Test Integration.AdminAudit fluent builder."""
+
+    def test_import(self):
+        from aquilia.config_builders import Integration
+        assert hasattr(Integration, "AdminAudit")
+
+    def test_defaults_disabled(self):
+        from aquilia.config_builders import Integration
+        a = Integration.AdminAudit()
+        d = a.to_dict()
+        assert d["enabled"] is False
+
+    def test_enable(self):
+        from aquilia.config_builders import Integration
+        a = Integration.AdminAudit().enable()
+        assert a.to_dict()["enabled"] is True
+
+    def test_max_entries(self):
+        from aquilia.config_builders import Integration
+        a = Integration.AdminAudit().enable().max_entries(500)
+        d = a.to_dict()
+        assert d["max_entries"] == 500
+
+    def test_log_logins_off(self):
+        from aquilia.config_builders import Integration
+        a = Integration.AdminAudit().enable().no_log_logins()
+        d = a.to_dict()
+        assert d["log_logins"] is False
+
+    def test_log_views_off(self):
+        from aquilia.config_builders import Integration
+        a = Integration.AdminAudit().enable().no_log_views()
+        d = a.to_dict()
+        assert d["log_views"] is False
+
+    def test_log_searches_off(self):
+        from aquilia.config_builders import Integration
+        a = Integration.AdminAudit().enable().no_log_searches()
+        d = a.to_dict()
+        assert d["log_searches"] is False
+
+    def test_exclude_actions(self):
+        from aquilia.config_builders import Integration
+        a = Integration.AdminAudit().enable().exclude_actions("VIEW", "LIST")
+        d = a.to_dict()
+        assert "VIEW" in d["excluded_actions"]
+        assert "LIST" in d["excluded_actions"]
+
+    def test_fluent_chain(self):
+        from aquilia.config_builders import Integration
+        a = (Integration.AdminAudit()
+             .enable()
+             .max_entries(200)
+             .no_log_logins()
+             .exclude_actions("SEARCH"))
+        d = a.to_dict()
+        assert d["enabled"] is True
+        assert d["max_entries"] == 200
+        assert d["log_logins"] is False
+        assert "SEARCH" in d["excluded_actions"]
+
+    def test_repr(self):
+        from aquilia.config_builders import Integration
+        r = repr(Integration.AdminAudit())
+        assert "AdminAudit" in r
+
+
+class TestAdminMonitoringBuilder:
+    """Test Integration.AdminMonitoring fluent builder."""
+
+    def test_import(self):
+        from aquilia.config_builders import Integration
+        assert hasattr(Integration, "AdminMonitoring")
+
+    def test_defaults_disabled(self):
+        from aquilia.config_builders import Integration
+        m = Integration.AdminMonitoring()
+        d = m.to_dict()
+        assert d["enabled"] is False
+
+    def test_enable(self):
+        from aquilia.config_builders import Integration
+        m = Integration.AdminMonitoring().enable()
+        assert m.to_dict()["enabled"] is True
+
+    def test_metrics_subset(self):
+        from aquilia.config_builders import Integration
+        m = Integration.AdminMonitoring().enable().metrics("cpu", "memory")
+        d = m.to_dict()
+        assert d["metrics"] == ["cpu", "memory"]
+
+    def test_all_metrics(self):
+        from aquilia.config_builders import Integration
+        m = Integration.AdminMonitoring().enable().all_metrics()
+        d = m.to_dict()
+        assert "cpu" in d["metrics"]
+        assert "health_checks" in d["metrics"]
+        assert len(d["metrics"]) == 8
+
+    def test_refresh_interval(self):
+        from aquilia.config_builders import Integration
+        m = Integration.AdminMonitoring().enable().refresh_interval(15)
+        d = m.to_dict()
+        assert d["refresh_interval"] == 15
+
+    def test_refresh_interval_minimum(self):
+        from aquilia.config_builders import Integration
+        m = Integration.AdminMonitoring().enable().refresh_interval(1)
+        d = m.to_dict()
+        assert d["refresh_interval"] == 5  # clamped to minimum
+
+    def test_fluent_chain(self):
+        from aquilia.config_builders import Integration
+        m = (Integration.AdminMonitoring()
+             .enable()
+             .metrics("cpu", "disk")
+             .refresh_interval(10))
+        d = m.to_dict()
+        assert d["enabled"] is True
+        assert d["metrics"] == ["cpu", "disk"]
+        assert d["refresh_interval"] == 10
+
+    def test_repr(self):
+        from aquilia.config_builders import Integration
+        r = repr(Integration.AdminMonitoring())
+        assert "AdminMonitoring" in r
+
+
+class TestAdminSidebarBuilder:
+    """Test Integration.AdminSidebar fluent builder."""
+
+    def test_import(self):
+        from aquilia.config_builders import Integration
+        assert hasattr(Integration, "AdminSidebar")
+
+    def test_defaults_all_visible(self):
+        from aquilia.config_builders import Integration
+        s = Integration.AdminSidebar()
+        d = s.to_dict()
+        for key in ("overview", "data", "system", "security", "models"):
+            assert d[key] is True, f"{key} should be True by default"
+
+    def test_hide_data(self):
+        from aquilia.config_builders import Integration
+        s = Integration.AdminSidebar().hide_data()
+        assert s.to_dict()["data"] is False
+
+    def test_hide_security(self):
+        from aquilia.config_builders import Integration
+        s = Integration.AdminSidebar().hide_security()
+        assert s.to_dict()["security"] is False
+
+    def test_hide_all(self):
+        from aquilia.config_builders import Integration
+        s = Integration.AdminSidebar().hide_all()
+        d = s.to_dict()
+        for key, val in d.items():
+            assert val is False, f"{key} should be False after hide_all()"
+
+    def test_show_all(self):
+        from aquilia.config_builders import Integration
+        s = Integration.AdminSidebar().hide_all().show_all()
+        d = s.to_dict()
+        for key, val in d.items():
+            assert val is True, f"{key} should be True after show_all()"
+
+    def test_fluent_chain(self):
+        from aquilia.config_builders import Integration
+        s = (Integration.AdminSidebar()
+             .hide_all()
+             .show_overview()
+             .show_models())
+        d = s.to_dict()
+        assert d["overview"] is True
+        assert d["models"] is True
+        assert d["data"] is False
+        assert d["system"] is False
+        assert d["security"] is False
+
+    def test_repr(self):
+        from aquilia.config_builders import Integration
+        r = repr(Integration.AdminSidebar())
+        assert "AdminSidebar" in r
+
+
+class TestBuildersWithIntegrationAdmin:
+    """Test that builder objects work with Integration.admin()."""
+
+    def test_modules_builder_passed_to_admin(self):
+        from aquilia.config_builders import Integration
+        modules = Integration.AdminModules().enable_all()
+        cfg = Integration.admin(modules=modules)
+        assert cfg["modules"]["monitoring"] is True
+        assert cfg["modules"]["audit"] is True
+        assert cfg["modules"]["dashboard"] is True
+
+    def test_audit_builder_passed_to_admin(self):
+        from aquilia.config_builders import Integration
+        audit = Integration.AdminAudit().enable().no_log_logins().max_entries(100)
+        cfg = Integration.admin(audit=audit)
+        assert cfg["audit_config"]["enabled"] is True
+        assert cfg["audit_config"]["log_logins"] is False
+        assert cfg["audit_config"]["max_entries"] == 100
+        assert cfg["modules"]["audit"] is True
+
+    def test_monitoring_builder_passed_to_admin(self):
+        from aquilia.config_builders import Integration
+        monitoring = Integration.AdminMonitoring().enable().metrics("cpu", "memory")
+        cfg = Integration.admin(monitoring=monitoring)
+        assert cfg["monitoring_config"]["enabled"] is True
+        assert cfg["monitoring_config"]["metrics"] == ["cpu", "memory"]
+        assert cfg["modules"]["monitoring"] is True
+
+    def test_sidebar_builder_passed_to_admin(self):
+        from aquilia.config_builders import Integration
+        sidebar = Integration.AdminSidebar().hide_data().hide_security()
+        cfg = Integration.admin(sidebar=sidebar)
+        assert cfg["sidebar_sections"]["data"] is False
+        assert cfg["sidebar_sections"]["security"] is False
+        assert cfg["sidebar_sections"]["overview"] is True
+
+    def test_all_builders_combined(self):
+        from aquilia.config_builders import Integration
+        cfg = Integration.admin(
+            modules=Integration.AdminModules().enable_all(),
+            audit=Integration.AdminAudit().enable().no_log_views(),
+            monitoring=Integration.AdminMonitoring().enable().refresh_interval(10),
+            sidebar=Integration.AdminSidebar().hide_security(),
+        )
+        assert cfg["modules"]["monitoring"] is True
+        assert cfg["modules"]["audit"] is True
+        assert cfg["audit_config"]["enabled"] is True
+        assert cfg["audit_config"]["log_views"] is False
+        assert cfg["monitoring_config"]["enabled"] is True
+        assert cfg["monitoring_config"]["refresh_interval"] == 10
+        assert cfg["sidebar_sections"]["security"] is False
+
+    def test_builders_override_flat_params(self):
+        """Builder objects should take priority over flat params."""
+        from aquilia.config_builders import Integration
+        cfg = Integration.admin(
+            modules=Integration.AdminModules().enable_monitoring(),
+            enable_monitoring=False,  # flat param should be overridden
+        )
+        assert cfg["modules"]["monitoring"] is True
+
+    def test_flat_params_still_work(self):
+        """Legacy flat params should still work when no builders passed."""
+        from aquilia.config_builders import Integration
+        cfg = Integration.admin(
+            enable_monitoring=True,
+            enable_audit=True,
+            audit_log_logins=False,
+            monitoring_metrics=["cpu"],
+        )
+        assert cfg["modules"]["monitoring"] is True
+        assert cfg["modules"]["audit"] is True
+        assert cfg["audit_config"]["log_logins"] is False
+        assert cfg["monitoring_config"]["metrics"] == ["cpu"]
+
+    def test_builder_to_full_config_roundtrip(self):
+        """Builder → Integration.admin() → AdminConfig.from_dict() roundtrip."""
+        from aquilia.config_builders import Integration
+        from aquilia.admin.site import AdminConfig
+
+        cfg_dict = Integration.admin(
+            modules=Integration.AdminModules().enable_all(),
+            audit=Integration.AdminAudit().enable().exclude_actions("VIEW"),
+            monitoring=Integration.AdminMonitoring().enable().metrics("cpu", "disk"),
+        )
+        cfg = AdminConfig.from_dict(cfg_dict)
+        assert cfg.is_module_enabled("monitoring") is True
+        assert cfg.is_module_enabled("audit") is True
+        assert cfg.audit_enabled is True
+        assert "VIEW" in cfg.audit_excluded_actions
+        assert cfg.monitoring_metrics == frozenset({"cpu", "disk"})
+
+
+class TestDisabledPageRendering:
+    """Test the disabled page overlay renders correctly."""
+
+    def test_render_disabled_page_function_exists(self):
+        from aquilia.admin.templates import render_disabled_page
+        assert callable(render_disabled_page)
+
+    def test_render_disabled_page_contains_module_name(self):
+        from aquilia.admin.templates import render_disabled_page
+        html = render_disabled_page(
+            module_name="Monitoring",
+            builder_hint="Integration.AdminMonitoring().enable()",
+            flat_hint="enable_monitoring=True",
+            icon_key="monitoring",
+            description="System metrics and live charts.",
+            app_list=[],
+            identity_name="admin",
+        )
+        assert "Monitoring" in html
+        assert "Module Disabled" in html
+
+    def test_render_disabled_page_contains_builder_hint(self):
+        from aquilia.admin.templates import render_disabled_page
+        html = render_disabled_page(
+            module_name="Audit Log",
+            builder_hint="Integration.AdminAudit().enable()",
+            flat_hint="enable_audit=True",
+            icon_key="audit",
+            description="Activity trail.",
+            app_list=[],
+            identity_name="admin",
+        )
+        assert "AdminAudit" in html
+        assert "enable_audit" in html
+
+    def test_render_disabled_page_has_buttons(self):
+        from aquilia.admin.templates import render_disabled_page
+        html = render_disabled_page(
+            module_name="Build",
+            builder_hint="Integration.AdminModules().enable_build()",
+            flat_hint="enable_build=True",
+            icon_key="build",
+            description="Build artifacts.",
+            app_list=[],
+            identity_name="admin",
+        )
+        assert "Dashboard" in html or "Go Back" in html
+
+    def test_disabled_template_file_exists(self):
+        from pathlib import Path
+        p = Path(__file__).resolve().parent.parent / "aquilia" / "admin" / "templates" / "disabled.html"
+        assert p.exists()
+
+    def test_disabled_template_extends_base(self):
+        from pathlib import Path
+        content = (Path(__file__).resolve().parent.parent / "aquilia" / "admin" / "templates" / "disabled.html").read_text()
+        assert "base.html" in content
+
+    def test_disabled_template_has_blur_effect(self):
+        from pathlib import Path
+        content = (Path(__file__).resolve().parent.parent / "aquilia" / "admin" / "templates" / "disabled.html").read_text()
+        assert "blur" in content
+        assert "disabled-overlay" in content
+
+    def test_controller_returns_200_for_disabled_module(self):
+        """Disabled modules return 200 with overlay, not 404."""
+        from aquilia.admin.site import AdminSite, AdminConfig
+        from aquilia.admin.controller import AdminController
+
+        site = AdminSite(name="disabled_test")
+        site.admin_config = AdminConfig(modules={
+            "dashboard": True, "orm": True, "build": True,
+            "migrations": True, "config": True, "workspace": True,
+            "permissions": True, "monitoring": False, "admin_users": True,
+            "profile": True, "audit": False,
+        })
+        ctrl = AdminController(site=site)
+        resp = ctrl._module_disabled_response("Monitoring", None)
+        assert resp.status == 200
+        body = resp._content.decode("utf-8")
+        assert "Module Disabled" in body
+        assert "enable" in body.lower()
 
 
 class TestIntegrationAdminConfigBuilder:
@@ -5485,7 +5941,7 @@ class TestAuditLogFiltering:
         from aquilia.admin.audit import AdminAuditLog, AdminAction
         from aquilia.admin.site import AdminConfig
 
-        cfg = AdminConfig(audit_excluded_actions=frozenset({"VIEW"}))
+        cfg = AdminConfig(audit_enabled=True, audit_excluded_actions=frozenset({"VIEW"}))
         log = AdminAuditLog()
         log._admin_config = cfg
 
@@ -5500,7 +5956,7 @@ class TestAuditLogFiltering:
         from aquilia.admin.audit import AdminAuditLog, AdminAction
         from aquilia.admin.site import AdminConfig
 
-        cfg = AdminConfig(audit_excluded_actions=frozenset({"VIEW"}))
+        cfg = AdminConfig(audit_enabled=True, audit_excluded_actions=frozenset({"VIEW"}))
         log = AdminAuditLog()
         log._admin_config = cfg
 
@@ -5515,7 +5971,7 @@ class TestAuditLogFiltering:
         from aquilia.admin.audit import AdminAuditLog, AdminAction
         from aquilia.admin.site import AdminConfig
 
-        cfg = AdminConfig(audit_log_logins=False)
+        cfg = AdminConfig(audit_enabled=True, audit_log_logins=False)
         log = AdminAuditLog()
         log._admin_config = cfg
 
@@ -5527,7 +5983,7 @@ class TestAuditLogFiltering:
         from aquilia.admin.audit import AdminAuditLog, AdminAction
         from aquilia.admin.site import AdminConfig
 
-        cfg = AdminConfig(audit_log_views=False)
+        cfg = AdminConfig(audit_enabled=True, audit_log_views=False)
         log = AdminAuditLog()
         log._admin_config = cfg
 
@@ -5542,7 +5998,7 @@ class TestAuditLogFiltering:
         from aquilia.admin.audit import AdminAuditLog, AdminAction
         from aquilia.admin.site import AdminConfig
 
-        cfg = AdminConfig(audit_log_searches=False)
+        cfg = AdminConfig(audit_enabled=True, audit_log_searches=False)
         log = AdminAuditLog()
         log._admin_config = cfg
 
@@ -5579,7 +6035,7 @@ class TestModelBackedAuditLogFiltering:
         from aquilia.admin.audit import ModelBackedAuditLog
         from aquilia.admin.site import AdminConfig
 
-        cfg = AdminConfig(audit_log_views=False)
+        cfg = AdminConfig(audit_enabled=True, audit_log_views=False)
         mbal = ModelBackedAuditLog()
         mbal.admin_config = cfg
         assert mbal._fallback._admin_config is cfg
@@ -5588,7 +6044,7 @@ class TestModelBackedAuditLogFiltering:
         from aquilia.admin.audit import ModelBackedAuditLog, AdminAction
         from aquilia.admin.site import AdminConfig
 
-        cfg = AdminConfig(audit_excluded_actions=frozenset({"VIEW"}))
+        cfg = AdminConfig(audit_enabled=True, audit_excluded_actions=frozenset({"VIEW"}))
         mbal = ModelBackedAuditLog()
         mbal.admin_config = cfg
 
@@ -5623,7 +6079,7 @@ class TestAdminControllerModuleGuards:
     def test_module_disabled_response_helper(self):
         ctrl = self._make_controller()
         resp = ctrl._module_disabled_response("Test Module", None)
-        assert resp.status == 404
+        assert resp.status == 200
         body = resp._content.decode("utf-8")
         assert "Module Disabled" in body or "disabled" in body.lower()
 

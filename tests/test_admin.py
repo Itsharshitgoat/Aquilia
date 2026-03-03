@@ -1315,6 +1315,14 @@ class TestAdminControllerRoutes:
         AdminSite.reset()
         self.site = AdminSite()
         self.site.register(UserModel)
+        # Enable all modules including monitoring & audit (disabled by default)
+        from aquilia.admin.site import AdminConfig
+        self.site.admin_config = AdminConfig(modules={
+            "dashboard": True, "orm": True, "build": True,
+            "migrations": True, "config": True, "workspace": True,
+            "permissions": True, "monitoring": True, "admin_users": True,
+            "profile": True, "audit": True,
+        }, audit_enabled=True, monitoring_enabled=True)
         self.ctrl = AdminController(site=self.site)
 
     def _make_ctx(self, identity=None, session_data=None, query_params=None):

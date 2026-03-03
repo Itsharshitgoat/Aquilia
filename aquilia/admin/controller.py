@@ -48,6 +48,7 @@ from .templates import (
     render_admin_users_page,
     render_profile_page,
     render_error_page,
+    render_disabled_page,
 )
 
 if TYPE_CHECKING:
@@ -212,18 +213,99 @@ class AdminController(Controller):
             self.site.initialize()
 
     def _module_disabled_response(self, module: str, identity) -> Response:
-        """Return a styled 404 error page when a module is disabled."""
+        """Return a styled page with blur overlay when a module is disabled.
+
+        Instead of a flat 404, the actual page layout is rendered with a
+        beautiful blurred glass overlay prompting the developer to enable
+        the feature in their workspace config.  This gives context about
+        *what* the page would show and *how* to activate it.
+        """
         app_list = self.site.get_app_list(identity) if identity else []
-        return _html_response(
-            render_error_page(
-                status=404,
-                title="Module Disabled",
-                message=f"The '{module}' module is disabled in admin configuration.",
-                app_list=app_list,
-                identity_name=_get_identity_name(identity),
+        identity_name = _get_identity_name(identity)
+
+        # Map module names to their config param hint
+        _config_hints = {
+            "Monitoring": (
+                "Integration.AdminMonitoring().enable()",
+                "enable_monitoring=True",
+                "monitoring",
+                "System metrics, CPU, memory, disk, and network monitoring with live charts.",
             ),
-            404,
+            "Audit Log": (
+                "Integration.AdminAudit().enable()",
+                "enable_audit=True",
+                "audit",
+                "Complete activity trail — every action, login, and data change recorded.",
+            ),
+            "ORM Models": (
+                "Integration.AdminModules().enable_orm()",
+                "enable_orm=True",
+                "orm",
+                "Explore registered models, schema, relations, and indexes.",
+            ),
+            "Build": (
+                "Integration.AdminModules().enable_build()",
+                "enable_build=True",
+                "build",
+                "Build artifacts, pipeline status, and Crous output.",
+            ),
+            "Migrations": (
+                "Integration.AdminModules().enable_migrations()",
+                "enable_migrations=True",
+                "migrations",
+                "Database migration history with syntax-highlighted source.",
+            ),
+            "Configuration": (
+                "Integration.AdminModules().enable_config()",
+                "enable_config=True",
+                "config",
+                "Workspace configuration files and settings overview.",
+            ),
+            "Workspace": (
+                "Integration.AdminModules().enable_workspace()",
+                "enable_workspace=True",
+                "workspace",
+                "Modules, manifests, and project metadata inspector.",
+            ),
+            "Permissions": (
+                "Integration.AdminModules().enable_permissions()",
+                "enable_permissions=True",
+                "permissions",
+                "Role matrix and per-model access control management.",
+            ),
+            "Admin Users": (
+                "Integration.AdminModules().enable_admin_users()",
+                "enable_admin_users=True",
+                "admin_users",
+                "Admin user accounts, roles, and hierarchy management.",
+            ),
+            "Profile": (
+                "Integration.AdminModules().enable_profile()",
+                "enable_profile=True",
+                "profile",
+                "Your admin profile, avatar, and password management.",
+            ),
+        }
+
+        hint = _config_hints.get(module, (
+            f"enable_{module.lower().replace(' ', '_')}=True",
+            f"enable_{module.lower().replace(' ', '_')}=True",
+            module.lower(),
+            f"The {module} module.",
+        ))
+
+        builder_hint, flat_hint, icon_key, description = hint
+
+        html = render_disabled_page(
+            module_name=module,
+            builder_hint=builder_hint,
+            flat_hint=flat_hint,
+            icon_key=icon_key,
+            description=description,
+            app_list=app_list,
+            identity_name=identity_name,
         )
+        return _html_response(html, 200)
 
     # ── Dashboard ────────────────────────────────────────────────────
 

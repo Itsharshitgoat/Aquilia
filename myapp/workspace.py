@@ -129,20 +129,35 @@ workspace = (
         url_prefix="/admin",
         site_title="myapp Admin",
         auto_discover=True,
-        # ── Module Visibility ──
-        # Disable pages you don't need:
-        # enable_build=False,
-        # enable_migrations=False,
-        # ── Audit Configuration ──
-        # enable_audit=True,
-        # audit_log_logins=True,
-        # audit_log_views=False,         # Don't log read-only access
-        # audit_log_searches=False,      # Don't log search queries
-        # audit_excluded_actions=["VIEW", "LIST"],
-        # ── Monitoring Configuration ──
-        # enable_monitoring=True,
-        # monitoring_metrics=["cpu", "memory", "system"],  # Subset of metrics
-        # monitoring_refresh_interval=15,
+        # ── Builder syntax (recommended, IDE-friendly) ──
+        # modules=(
+        #     Integration.AdminModules()
+        #     .enable_orm()
+        #     .enable_monitoring()     # opt-in (disabled by default)
+        #     .disable_build()
+        # ),
+        # audit=(
+        #     Integration.AdminAudit()
+        #     .enable()                # opt-in (disabled by default)
+        #     .no_log_views()
+        #     .exclude_actions("VIEW", "LIST")
+        # ),
+        # monitoring=(
+        #     Integration.AdminMonitoring()
+        #     .enable()                # opt-in (disabled by default)
+        #     .metrics("cpu", "memory", "system")
+        #     .refresh_interval(15)
+        # ),
+        # sidebar=(
+        #     Integration.AdminSidebar()
+        #     .show_overview()
+        #     .show_data()
+        #     .hide_security()
+        # ),
+        # ── Flat syntax (legacy, quick) ──
+        # enable_monitoring=True,      # disabled by default
+        # enable_audit=True,           # disabled by default
+        # monitoring_metrics=["cpu", "memory", "system"],
     ))
 
     .integrate(

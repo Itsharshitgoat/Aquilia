@@ -809,6 +809,515 @@ class Integration:
             **kwargs,
         }
 
+    # ── Admin Nested Builder Classes ──────────────────────────────────
+    #
+    # IDE-friendly, type-safe configuration objects for the admin panel.
+    # Each sub-config is a small fluent builder that produces a typed dict.
+    # Developers get autocomplete, doc-strings, and compile-time safety.
+    #
+    # Usage::
+    #
+    #     .integrate(Integration.admin(
+    #         site_title="MyApp Admin",
+    #         modules=(
+    #             Integration.AdminModules()
+    #             .enable_dashboard()
+    #             .enable_orm()
+    #             .disable_build()
+    #             .disable_migrations()
+    #         ),
+    #         audit=(
+    #             Integration.AdminAudit()
+    #             .enable()
+    #             .log_logins()
+    #             .exclude_actions("VIEW", "LIST")
+    #         ),
+    #         monitoring=(
+    #             Integration.AdminMonitoring()
+    #             .enable()
+    #             .metrics("cpu", "memory", "system")
+    #             .refresh_interval(15)
+    #         ),
+    #         sidebar=(
+    #             Integration.AdminSidebar()
+    #             .show_overview()
+    #             .show_data()
+    #             .hide_security()
+    #         ),
+    #     ))
+
+    class AdminModules:
+        """
+        Fluent builder for admin module visibility.
+
+        Controls which pages are visible in the admin panel.
+        All modules default to enabled except monitoring and audit
+        (which must be explicitly opted-in).
+
+        Example::
+
+            modules = (
+                Integration.AdminModules()
+                .enable_orm()
+                .enable_monitoring()   # Opt-in
+                .disable_build()
+            )
+        """
+
+        __slots__ = ("_dashboard", "_orm", "_build", "_migrations",
+                     "_config", "_workspace", "_permissions",
+                     "_monitoring", "_admin_users", "_profile", "_audit")
+
+        def __init__(self) -> None:
+            self._dashboard: bool = True
+            self._orm: bool = True
+            self._build: bool = True
+            self._migrations: bool = True
+            self._config: bool = True
+            self._workspace: bool = True
+            self._permissions: bool = True
+            self._monitoring: bool = False   # disabled by default
+            self._admin_users: bool = True
+            self._profile: bool = True
+            self._audit: bool = False         # disabled by default
+
+        # ── Dashboard ──
+        def enable_dashboard(self) -> "Integration.AdminModules":
+            """Show the Dashboard page."""
+            self._dashboard = True
+            return self
+
+        def disable_dashboard(self) -> "Integration.AdminModules":
+            """Hide the Dashboard page."""
+            self._dashboard = False
+            return self
+
+        # ── ORM ──
+        def enable_orm(self) -> "Integration.AdminModules":
+            """Show the ORM Models page."""
+            self._orm = True
+            return self
+
+        def disable_orm(self) -> "Integration.AdminModules":
+            """Hide the ORM Models page."""
+            self._orm = False
+            return self
+
+        # ── Build ──
+        def enable_build(self) -> "Integration.AdminModules":
+            """Show the Build page."""
+            self._build = True
+            return self
+
+        def disable_build(self) -> "Integration.AdminModules":
+            """Hide the Build page."""
+            self._build = False
+            return self
+
+        # ── Migrations ──
+        def enable_migrations(self) -> "Integration.AdminModules":
+            """Show the Migrations page."""
+            self._migrations = True
+            return self
+
+        def disable_migrations(self) -> "Integration.AdminModules":
+            """Hide the Migrations page."""
+            self._migrations = False
+            return self
+
+        # ── Config ──
+        def enable_config(self) -> "Integration.AdminModules":
+            """Show the Configuration page."""
+            self._config = True
+            return self
+
+        def disable_config(self) -> "Integration.AdminModules":
+            """Hide the Configuration page."""
+            self._config = False
+            return self
+
+        # ── Workspace ──
+        def enable_workspace(self) -> "Integration.AdminModules":
+            """Show the Workspace page."""
+            self._workspace = True
+            return self
+
+        def disable_workspace(self) -> "Integration.AdminModules":
+            """Hide the Workspace page."""
+            self._workspace = False
+            return self
+
+        # ── Permissions ──
+        def enable_permissions(self) -> "Integration.AdminModules":
+            """Show the Permissions page."""
+            self._permissions = True
+            return self
+
+        def disable_permissions(self) -> "Integration.AdminModules":
+            """Hide the Permissions page."""
+            self._permissions = False
+            return self
+
+        # ── Monitoring (disabled by default) ──
+        def enable_monitoring(self) -> "Integration.AdminModules":
+            """Show the Monitoring page. Disabled by default — opt in."""
+            self._monitoring = True
+            return self
+
+        def disable_monitoring(self) -> "Integration.AdminModules":
+            """Hide the Monitoring page."""
+            self._monitoring = False
+            return self
+
+        # ── Admin Users ──
+        def enable_admin_users(self) -> "Integration.AdminModules":
+            """Show the Admin Users page."""
+            self._admin_users = True
+            return self
+
+        def disable_admin_users(self) -> "Integration.AdminModules":
+            """Hide the Admin Users page."""
+            self._admin_users = False
+            return self
+
+        # ── Profile ──
+        def enable_profile(self) -> "Integration.AdminModules":
+            """Show the Profile page."""
+            self._profile = True
+            return self
+
+        def disable_profile(self) -> "Integration.AdminModules":
+            """Hide the Profile page."""
+            self._profile = False
+            return self
+
+        # ── Audit (disabled by default) ──
+        def enable_audit(self) -> "Integration.AdminModules":
+            """Show the Audit Log page. Disabled by default — opt in."""
+            self._audit = True
+            return self
+
+        def disable_audit(self) -> "Integration.AdminModules":
+            """Hide the Audit Log page."""
+            self._audit = False
+            return self
+
+        # ── Convenience ──
+        def enable_all(self) -> "Integration.AdminModules":
+            """Enable every admin module (including monitoring & audit)."""
+            for attr in self.__slots__:
+                setattr(self, attr, True)
+            return self
+
+        def disable_all(self) -> "Integration.AdminModules":
+            """Disable every admin module."""
+            for attr in self.__slots__:
+                setattr(self, attr, False)
+            return self
+
+        def to_dict(self) -> Dict[str, bool]:
+            """Serialize to a dict consumed by AdminConfig."""
+            return {
+                "dashboard": self._dashboard,
+                "orm": self._orm,
+                "build": self._build,
+                "migrations": self._migrations,
+                "config": self._config,
+                "workspace": self._workspace,
+                "permissions": self._permissions,
+                "monitoring": self._monitoring,
+                "admin_users": self._admin_users,
+                "profile": self._profile,
+                "audit": self._audit,
+            }
+
+        def __repr__(self) -> str:
+            enabled = [k for k, v in self.to_dict().items() if v]
+            return f"AdminModules(enabled={enabled})"
+
+    class AdminAudit:
+        """
+        Fluent builder for admin audit log configuration.
+
+        Controls whether the audit trail is active, which action
+        categories are recorded, and which specific actions are
+        excluded.
+
+        **Disabled by default** — call ``.enable()`` to activate.
+
+        Example::
+
+            audit = (
+                Integration.AdminAudit()
+                .enable()
+                .max_entries(50_000)
+                .log_logins()
+                .no_log_views()            # skip VIEW / LIST
+                .exclude_actions("SEARCH")
+            )
+        """
+
+        __slots__ = ("_enabled", "_max_entries", "_log_logins",
+                     "_log_views", "_log_searches", "_excluded_actions")
+
+        def __init__(self) -> None:
+            self._enabled: bool = False      # disabled by default
+            self._max_entries: int = 10_000
+            self._log_logins: bool = True
+            self._log_views: bool = True
+            self._log_searches: bool = True
+            self._excluded_actions: List[str] = []
+
+        def enable(self) -> "Integration.AdminAudit":
+            """Enable audit logging."""
+            self._enabled = True
+            return self
+
+        def disable(self) -> "Integration.AdminAudit":
+            """Disable audit logging entirely."""
+            self._enabled = False
+            return self
+
+        def max_entries(self, n: int) -> "Integration.AdminAudit":
+            """Set the maximum number of audit entries (FIFO eviction)."""
+            self._max_entries = max(100, int(n))
+            return self
+
+        def log_logins(self, enabled: bool = True) -> "Integration.AdminAudit":
+            """Record LOGIN / LOGOUT / LOGIN_FAILED events."""
+            self._log_logins = enabled
+            return self
+
+        def no_log_logins(self) -> "Integration.AdminAudit":
+            """Skip LOGIN / LOGOUT / LOGIN_FAILED events."""
+            self._log_logins = False
+            return self
+
+        def log_views(self, enabled: bool = True) -> "Integration.AdminAudit":
+            """Record VIEW / LIST events."""
+            self._log_views = enabled
+            return self
+
+        def no_log_views(self) -> "Integration.AdminAudit":
+            """Skip VIEW / LIST events."""
+            self._log_views = False
+            return self
+
+        def log_searches(self, enabled: bool = True) -> "Integration.AdminAudit":
+            """Record SEARCH events."""
+            self._log_searches = enabled
+            return self
+
+        def no_log_searches(self) -> "Integration.AdminAudit":
+            """Skip SEARCH events."""
+            self._log_searches = False
+            return self
+
+        def exclude_actions(self, *actions: str) -> "Integration.AdminAudit":
+            """
+            Exclude specific actions from audit logging.
+
+            Valid values: ``"LOGIN"``, ``"LOGOUT"``, ``"LOGIN_FAILED"``,
+            ``"VIEW"``, ``"LIST"``, ``"CREATE"``, ``"UPDATE"``,
+            ``"DELETE"``, ``"BULK_ACTION"``, ``"EXPORT"``,
+            ``"SETTINGS_CHANGE"``, ``"SEARCH"``, ``"PERMISSION_CHANGE"``.
+            """
+            self._excluded_actions = list(actions)
+            return self
+
+        def to_dict(self) -> Dict[str, Any]:
+            """Serialize to a dict consumed by AdminConfig."""
+            return {
+                "enabled": self._enabled,
+                "max_entries": self._max_entries,
+                "log_logins": self._log_logins,
+                "log_views": self._log_views,
+                "log_searches": self._log_searches,
+                "excluded_actions": list(self._excluded_actions),
+            }
+
+        def __repr__(self) -> str:
+            state = "enabled" if self._enabled else "disabled"
+            return f"AdminAudit({state})"
+
+    class AdminMonitoring:
+        """
+        Fluent builder for admin monitoring configuration.
+
+        Controls whether real-time system metrics are collected and
+        which metric categories are shown in the dashboard.
+
+        **Disabled by default** — call ``.enable()`` to activate.
+
+        Example::
+
+            monitoring = (
+                Integration.AdminMonitoring()
+                .enable()
+                .metrics("cpu", "memory", "system")
+                .refresh_interval(15)
+            )
+        """
+
+        _ALL_METRICS = [
+            "cpu", "memory", "disk", "network",
+            "process", "python", "system", "health_checks",
+        ]
+
+        __slots__ = ("_enabled", "_metrics", "_refresh_interval")
+
+        def __init__(self) -> None:
+            self._enabled: bool = False      # disabled by default
+            self._metrics: List[str] = list(self._ALL_METRICS)
+            self._refresh_interval: int = 30
+
+        def enable(self) -> "Integration.AdminMonitoring":
+            """Enable monitoring dashboard."""
+            self._enabled = True
+            return self
+
+        def disable(self) -> "Integration.AdminMonitoring":
+            """Disable monitoring dashboard."""
+            self._enabled = False
+            return self
+
+        def metrics(self, *names: str) -> "Integration.AdminMonitoring":
+            """
+            Set which metric sections to collect.
+
+            Valid values: ``"cpu"``, ``"memory"``, ``"disk"``,
+            ``"network"``, ``"process"``, ``"python"``, ``"system"``,
+            ``"health_checks"``.
+
+            Pass no arguments to collect all metrics.
+            """
+            self._metrics = list(names) if names else list(self._ALL_METRICS)
+            return self
+
+        def all_metrics(self) -> "Integration.AdminMonitoring":
+            """Collect every available metric."""
+            self._metrics = list(self._ALL_METRICS)
+            return self
+
+        def refresh_interval(self, seconds: int) -> "Integration.AdminMonitoring":
+            """Auto-refresh interval for the monitoring dashboard (min 5s)."""
+            self._refresh_interval = max(5, int(seconds))
+            return self
+
+        def to_dict(self) -> Dict[str, Any]:
+            """Serialize to a dict consumed by AdminConfig."""
+            return {
+                "enabled": self._enabled,
+                "metrics": list(self._metrics),
+                "refresh_interval": self._refresh_interval,
+            }
+
+        def __repr__(self) -> str:
+            state = "enabled" if self._enabled else "disabled"
+            return f"AdminMonitoring({state}, metrics={self._metrics})"
+
+    class AdminSidebar:
+        """
+        Fluent builder for admin sidebar section visibility.
+
+        Controls which sidebar sections are rendered. Individual modules
+        within a section can still be hidden via ``AdminModules``.
+
+        Example::
+
+            sidebar = (
+                Integration.AdminSidebar()
+                .show_overview()
+                .show_data()
+                .hide_security()
+            )
+        """
+
+        __slots__ = ("_overview", "_data", "_system", "_security", "_models")
+
+        def __init__(self) -> None:
+            self._overview: bool = True
+            self._data: bool = True
+            self._system: bool = True
+            self._security: bool = True
+            self._models: bool = True
+
+        def show_overview(self) -> "Integration.AdminSidebar":
+            """Show the Overview section."""
+            self._overview = True
+            return self
+
+        def hide_overview(self) -> "Integration.AdminSidebar":
+            """Hide the Overview section."""
+            self._overview = False
+            return self
+
+        def show_data(self) -> "Integration.AdminSidebar":
+            """Show the Data section (ORM, Migrations)."""
+            self._data = True
+            return self
+
+        def hide_data(self) -> "Integration.AdminSidebar":
+            """Hide the Data section."""
+            self._data = False
+            return self
+
+        def show_system(self) -> "Integration.AdminSidebar":
+            """Show the System section (Monitoring, Workspace, Build, Config)."""
+            self._system = True
+            return self
+
+        def hide_system(self) -> "Integration.AdminSidebar":
+            """Hide the System section."""
+            self._system = False
+            return self
+
+        def show_security(self) -> "Integration.AdminSidebar":
+            """Show the Security section (Permissions, Audit, Admin Users)."""
+            self._security = True
+            return self
+
+        def hide_security(self) -> "Integration.AdminSidebar":
+            """Hide the Security section."""
+            self._security = False
+            return self
+
+        def show_models(self) -> "Integration.AdminSidebar":
+            """Show the Models section (per-model links)."""
+            self._models = True
+            return self
+
+        def hide_models(self) -> "Integration.AdminSidebar":
+            """Hide the Models section."""
+            self._models = False
+            return self
+
+        def show_all(self) -> "Integration.AdminSidebar":
+            """Show every sidebar section."""
+            for attr in self.__slots__:
+                setattr(self, attr, True)
+            return self
+
+        def hide_all(self) -> "Integration.AdminSidebar":
+            """Hide every sidebar section."""
+            for attr in self.__slots__:
+                setattr(self, attr, False)
+            return self
+
+        def to_dict(self) -> Dict[str, bool]:
+            """Serialize to a dict consumed by AdminConfig."""
+            return {
+                "overview": self._overview,
+                "data": self._data,
+                "system": self._system,
+                "security": self._security,
+                "models": self._models,
+            }
+
+        def __repr__(self) -> str:
+            visible = [k for k, v in self.to_dict().items() if v]
+            return f"AdminSidebar(visible={visible})"
+
     @staticmethod
     def admin(
         url_prefix: str = "/admin",
@@ -816,100 +1325,96 @@ class Integration:
         site_header: str = "Aquilia Administration",
         auto_discover: bool = True,
         login_url: Optional[str] = None,
-        enable_audit: bool = True,
-        audit_max_entries: int = 10_000,
         list_per_page: int = 25,
         theme: str = "auto",
-        # ── Module Visibility ─────────────────────────────────────
-        enable_dashboard: bool = True,
-        enable_orm: bool = True,
-        enable_build: bool = True,
-        enable_migrations: bool = True,
-        enable_config: bool = True,
-        enable_workspace: bool = True,
-        enable_permissions: bool = True,
-        enable_monitoring: bool = True,
-        enable_admin_users: bool = True,
-        enable_profile: bool = True,
-        # ── Audit Configuration ───────────────────────────────────
-        audit_log_logins: bool = True,
-        audit_log_views: bool = True,
-        audit_log_searches: bool = True,
+        # ── Nested builder objects (IDE-friendly) ─────────────────
+        modules: Optional["Integration.AdminModules"] = None,
+        audit: Optional["Integration.AdminAudit"] = None,
+        monitoring: Optional["Integration.AdminMonitoring"] = None,
+        sidebar: Optional["Integration.AdminSidebar"] = None,
+        # ── Legacy flat params (backward compat) ─────────────────
+        enable_audit: Optional[bool] = None,
+        audit_max_entries: int = 10_000,
+        enable_dashboard: Optional[bool] = None,
+        enable_orm: Optional[bool] = None,
+        enable_build: Optional[bool] = None,
+        enable_migrations: Optional[bool] = None,
+        enable_config: Optional[bool] = None,
+        enable_workspace: Optional[bool] = None,
+        enable_permissions: Optional[bool] = None,
+        enable_monitoring: Optional[bool] = None,
+        enable_admin_users: Optional[bool] = None,
+        enable_profile: Optional[bool] = None,
+        audit_log_logins: Optional[bool] = None,
+        audit_log_views: Optional[bool] = None,
+        audit_log_searches: Optional[bool] = None,
         audit_excluded_actions: Optional[List[str]] = None,
-        # ── Monitoring Configuration ──────────────────────────────
         monitoring_metrics: Optional[List[str]] = None,
-        monitoring_refresh_interval: int = 30,
-        # ── Sidebar Configuration ─────────────────────────────────
+        monitoring_refresh_interval: Optional[int] = None,
         sidebar_sections: Optional[Dict[str, bool]] = None,
         **kwargs,
     ) -> Dict[str, Any]:
         """
         Configure the admin dashboard integration.
 
-        Provides a Django-admin-like interface with auto-discovered models,
-        RBAC, audit logging, and the aqdocx design system.
+        Accepts either **nested builder objects** (preferred, IDE-friendly)
+        or legacy flat keyword arguments for backward compatibility.
+        When both are provided, the builder object wins.
+
+        **Default change (v2):** ``monitoring`` and ``audit`` are
+        **disabled** by default. Use the builder or set
+        ``enable_monitoring=True`` / ``enable_audit=True`` to opt in.
+        Pages for disabled features show a beautiful blurred overlay
+        prompting the developer to enable the feature in config.
 
         Args:
             url_prefix: URL prefix for admin routes (default "/admin").
             site_title: Title shown in browser tab.
             site_header: Header text in the admin dashboard.
             auto_discover: Auto-register models from ModelRegistry.
-            login_url: Custom login URL (defaults to ``{url_prefix}/login``).
-            enable_audit: Enable the admin audit trail.
-            audit_max_entries: Max audit log entries (FIFO eviction).
+            login_url: Custom login URL.
             list_per_page: Default rows per page in list views.
-            theme: Theme mode — ``"auto"``, ``"dark"``, or ``"light"``.
-
-            enable_dashboard: Show the Dashboard page (default True).
-            enable_orm: Show the ORM Models page (default True).
-            enable_build: Show the Build page (default True).
-            enable_migrations: Show the Migrations page (default True).
-            enable_config: Show the Configuration page (default True).
-            enable_workspace: Show the Workspace page (default True).
-            enable_permissions: Show the Permissions page (default True).
-            enable_monitoring: Show the Monitoring page (default True).
-            enable_admin_users: Show the Admin Users page (default True).
-            enable_profile: Show the Profile page (default True).
-
-            audit_log_logins: Record LOGIN/LOGOUT events (default True).
-            audit_log_views: Record VIEW/LIST events (default True).
-            audit_log_searches: Record SEARCH events (default True).
-            audit_excluded_actions: List of AdminAction names to never record.
-                Valid values: ``"LOGIN"``, ``"LOGOUT"``, ``"LOGIN_FAILED"``,
-                ``"VIEW"``, ``"LIST"``, ``"CREATE"``, ``"UPDATE"``,
-                ``"DELETE"``, ``"BULK_ACTION"``, ``"EXPORT"``,
-                ``"SETTINGS_CHANGE"``, ``"SEARCH"``, ``"PERMISSION_CHANGE"``.
-
-            monitoring_metrics: Which metric sections to collect.
-                Defaults to all: ``["cpu", "memory", "disk", "network",
-                "process", "python", "system", "health_checks"]``.
-                Pass a subset to reduce overhead.
-            monitoring_refresh_interval: Auto-refresh interval in seconds
-                for the monitoring dashboard (default 30).
-
-            sidebar_sections: Override sidebar section visibility.
-                Keys: ``"overview"``, ``"data"``, ``"system"``,
-                ``"security"``, ``"models"``. Values: bool.
-            **kwargs: Additional admin configuration.
+            theme: ``"auto"``, ``"dark"``, or ``"light"``.
+            modules: ``AdminModules`` builder — controls page visibility.
+            audit: ``AdminAudit`` builder — controls audit logging.
+            monitoring: ``AdminMonitoring`` builder — controls metrics.
+            sidebar: ``AdminSidebar`` builder — controls sidebar sections.
 
         Returns:
             Admin configuration dictionary.
 
-        Example::
+        Example — **builder syntax** (recommended)::
 
             .integrate(Integration.admin(
-                url_prefix="/admin",
                 site_title="MyApp Admin",
-                auto_discover=True,
-                # Disable pages you don't need
-                enable_build=False,
-                enable_migrations=False,
-                # Only log write operations
+                modules=(
+                    Integration.AdminModules()
+                    .enable_orm()
+                    .enable_monitoring()     # opt-in
+                    .disable_build()
+                ),
+                audit=(
+                    Integration.AdminAudit()
+                    .enable()                # opt-in
+                    .no_log_views()
+                    .exclude_actions("SEARCH")
+                ),
+                monitoring=(
+                    Integration.AdminMonitoring()
+                    .enable()                # opt-in
+                    .metrics("cpu", "memory", "system")
+                    .refresh_interval(15)
+                ),
+            ))
+
+        Example — **flat syntax** (legacy / quick)::
+
+            .integrate(Integration.admin(
+                site_title="MyApp Admin",
+                enable_monitoring=True,
+                enable_audit=True,
                 audit_log_views=False,
-                audit_log_searches=False,
-                audit_excluded_actions=["VIEW", "LIST"],
-                # Only monitor CPU and memory
-                monitoring_metrics=["cpu", "memory", "system"],
+                monitoring_metrics=["cpu", "memory"],
             ))
         """
         _all_metrics = [
@@ -917,52 +1422,79 @@ class Integration:
             "process", "python", "system", "health_checks",
         ]
 
-        _default_sidebar = {
-            "overview": True,
-            "data": True,
-            "system": True,
-            "security": True,
-            "models": True,
-        }
+        # ── Resolve modules ──────────────────────────────────────────
+        if modules is not None:
+            mod_dict = modules.to_dict()
+        else:
+            # Build from legacy flat params (defaults: monitoring & audit OFF)
+            mod_dict = {
+                "dashboard": enable_dashboard if enable_dashboard is not None else True,
+                "orm": enable_orm if enable_orm is not None else True,
+                "build": enable_build if enable_build is not None else True,
+                "migrations": enable_migrations if enable_migrations is not None else True,
+                "config": enable_config if enable_config is not None else True,
+                "workspace": enable_workspace if enable_workspace is not None else True,
+                "permissions": enable_permissions if enable_permissions is not None else True,
+                "monitoring": enable_monitoring if enable_monitoring is not None else False,
+                "admin_users": enable_admin_users if enable_admin_users is not None else True,
+                "profile": enable_profile if enable_profile is not None else True,
+                "audit": enable_audit if enable_audit is not None else False,
+            }
 
-        # Merge user sidebar overrides with defaults
-        resolved_sidebar = {**_default_sidebar}
-        if sidebar_sections:
-            for k, v in sidebar_sections.items():
-                if k in resolved_sidebar:
-                    resolved_sidebar[k] = bool(v)
+        # ── Resolve audit ────────────────────────────────────────────
+        if audit is not None:
+            audit_dict = audit.to_dict()
+        else:
+            _aud_enabled = enable_audit if enable_audit is not None else False
+            audit_dict = {
+                "enabled": _aud_enabled,
+                "max_entries": int(audit_max_entries),
+                "log_logins": audit_log_logins if audit_log_logins is not None else True,
+                "log_views": audit_log_views if audit_log_views is not None else True,
+                "log_searches": audit_log_searches if audit_log_searches is not None else True,
+                "excluded_actions": list(audit_excluded_actions or []),
+            }
 
-        # Build enabled-modules map for quick lookup
-        modules = {
-            "dashboard": bool(enable_dashboard),
-            "orm": bool(enable_orm),
-            "build": bool(enable_build),
-            "migrations": bool(enable_migrations),
-            "config": bool(enable_config),
-            "workspace": bool(enable_workspace),
-            "permissions": bool(enable_permissions),
-            "monitoring": bool(enable_monitoring),
-            "admin_users": bool(enable_admin_users),
-            "profile": bool(enable_profile),
-            "audit": bool(enable_audit),
-        }
+        # Keep module audit flag in sync with audit_config.enabled
+        # Only override if the audit builder was explicitly provided,
+        # or if legacy flat enable_audit was given AND no modules builder.
+        if audit is not None:
+            mod_dict["audit"] = bool(audit_dict.get("enabled", mod_dict.get("audit", False)))
+        elif modules is None and enable_audit is not None:
+            mod_dict["audit"] = bool(audit_dict.get("enabled", mod_dict.get("audit", False)))
 
-        # Audit config
-        audit_config = {
-            "enabled": bool(enable_audit),
-            "max_entries": int(audit_max_entries),
-            "log_logins": bool(audit_log_logins),
-            "log_views": bool(audit_log_views),
-            "log_searches": bool(audit_log_searches),
-            "excluded_actions": list(audit_excluded_actions or []),
-        }
+        # ── Resolve monitoring ───────────────────────────────────────
+        if monitoring is not None:
+            mon_dict = monitoring.to_dict()
+        else:
+            _mon_enabled = enable_monitoring if enable_monitoring is not None else False
+            mon_dict = {
+                "enabled": _mon_enabled,
+                "metrics": list(monitoring_metrics) if monitoring_metrics else list(_all_metrics),
+                "refresh_interval": max(5, int(monitoring_refresh_interval)) if monitoring_refresh_interval is not None else 30,
+            }
 
-        # Monitoring config
-        monitoring_config = {
-            "enabled": bool(enable_monitoring),
-            "metrics": list(monitoring_metrics) if monitoring_metrics else list(_all_metrics),
-            "refresh_interval": max(5, int(monitoring_refresh_interval)),
-        }
+        # Keep module monitoring flag in sync
+        # Only override if the monitoring builder was explicitly provided,
+        # or if legacy flat enable_monitoring was given AND no modules builder.
+        if monitoring is not None:
+            mod_dict["monitoring"] = bool(mon_dict.get("enabled", mod_dict.get("monitoring", False)))
+        elif modules is None and enable_monitoring is not None:
+            mod_dict["monitoring"] = bool(mon_dict.get("enabled", mod_dict.get("monitoring", False)))
+
+        # ── Resolve sidebar ──────────────────────────────────────────
+        if sidebar is not None:
+            sidebar_dict = sidebar.to_dict()
+        else:
+            _default_sidebar = {
+                "overview": True, "data": True, "system": True,
+                "security": True, "models": True,
+            }
+            sidebar_dict = {**_default_sidebar}
+            if sidebar_sections:
+                for k, v in sidebar_sections.items():
+                    if k in sidebar_dict:
+                        sidebar_dict[k] = bool(v)
 
         return {
             "_integration_type": "admin",
@@ -972,14 +1504,14 @@ class Integration:
             "site_header": site_header,
             "auto_discover": auto_discover,
             "login_url": login_url or f"{url_prefix.rstrip('/')}/login",
-            "enable_audit": enable_audit,
-            "audit_max_entries": audit_max_entries,
+            "enable_audit": audit_dict.get("enabled", False),
+            "audit_max_entries": audit_dict.get("max_entries", 10_000),
             "list_per_page": list_per_page,
             "theme": theme,
-            "modules": modules,
-            "audit_config": audit_config,
-            "monitoring_config": monitoring_config,
-            "sidebar_sections": resolved_sidebar,
+            "modules": mod_dict,
+            "audit_config": audit_dict,
+            "monitoring_config": mon_dict,
+            "sidebar_sections": sidebar_dict,
             **kwargs,
         }
 

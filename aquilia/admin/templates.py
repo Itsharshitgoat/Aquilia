@@ -627,6 +627,74 @@ def render_error_page(
 </div></body></html>"""
 
 
+def render_disabled_page(
+    module_name: str,
+    builder_hint: str = "",
+    flat_hint: str = "",
+    icon_key: str = "",
+    description: str = "",
+    app_list: Optional[List[Dict[str, Any]]] = None,
+    identity_name: str = "Admin",
+    *,
+    site_title: str = "Aquilia Admin",
+    url_prefix: str = "/admin",
+) -> str:
+    """Render a beautiful blurred overlay page for disabled admin modules.
+
+    Shows the page layout with a frosted-glass overlay explaining that
+    the module is disabled and providing the exact config snippet needed
+    to enable it.  Much more helpful than a flat 404.
+    """
+    # Map icon_key to Lucide icon classes
+    _icon_map = {
+        "monitoring": "icon-activity",
+        "audit": "icon-scroll-text",
+        "orm": "icon-database",
+        "build": "icon-package",
+        "migrations": "icon-git-branch",
+        "config": "icon-settings",
+        "workspace": "icon-layout-template",
+        "permissions": "icon-shield",
+        "admin_users": "icon-users",
+        "profile": "icon-user",
+    }
+    icon_class = _icon_map.get(icon_key, "icon-lock")
+
+    if _HAS_JINJA2:
+        return _render_template(
+            "disabled.html",
+            module_name=module_name,
+            builder_hint=builder_hint,
+            flat_hint=flat_hint,
+            icon_key=icon_key,
+            icon_class=icon_class,
+            description=description,
+            app_list=app_list or [],
+            active_page=icon_key,
+            identity_name=identity_name,
+            site_title=site_title,
+            url_prefix=url_prefix,
+            page_title=f"{module_name} (Disabled)",
+        )
+    # Inline fallback
+    esc_name = html.escape(module_name)
+    esc_builder = html.escape(builder_hint)
+    esc_flat = html.escape(flat_hint)
+    esc_desc = html.escape(description)
+    return f"""<!DOCTYPE html><html lang="en" data-theme="dark"><head>
+<meta charset="UTF-8"><title>{esc_name} (Disabled) — Aquilia Admin</title><style>{_FALLBACK_CSS}</style></head>
+<body><div style="padding:48px;text-align:center">
+<div style="font-size:4rem;opacity:.15;margin-bottom:16px;">⏸</div>
+<h1>{esc_name} — Disabled</h1>
+<p style="color:#a1a1aa;margin:12px 0;">{esc_desc}</p>
+<div style="background:#18181b;border:1px solid #27272a;border-radius:8px;padding:16px;margin:24px auto;max-width:500px;text-align:left;">
+<code style="color:#22c55e;font-size:.85rem;">{esc_builder}</code><br>
+<span style="color:#71717a;font-size:.75rem;">or: {esc_flat}</span>
+</div>
+<a href="{url_prefix}/" style="color:#22c55e">← Back to Dashboard</a>
+</div></body></html>"""
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Inline fallbacks (when Jinja2 is not installed)
 # ═══════════════════════════════════════════════════════════════════════════

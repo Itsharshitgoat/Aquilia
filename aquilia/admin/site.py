@@ -53,20 +53,20 @@ class AdminConfig:
     modules: Dict[str, bool] = field(default_factory=lambda: {
         "dashboard": True, "orm": True, "build": True,
         "migrations": True, "config": True, "workspace": True,
-        "permissions": True, "monitoring": True, "admin_users": True,
-        "profile": True, "audit": True,
+        "permissions": True, "monitoring": False, "admin_users": True,
+        "profile": True, "audit": False,
     })
 
-    # Audit settings
-    audit_enabled: bool = True
+    # Audit settings (disabled by default — opt in)
+    audit_enabled: bool = False
     audit_max_entries: int = 10_000
     audit_log_logins: bool = True
     audit_log_views: bool = True
     audit_log_searches: bool = True
     audit_excluded_actions: FrozenSet[str] = field(default_factory=frozenset)
 
-    # Monitoring settings
-    monitoring_enabled: bool = True
+    # Monitoring settings (disabled by default — opt in)
+    monitoring_enabled: bool = False
     monitoring_metrics: FrozenSet[str] = field(default_factory=lambda: frozenset({
         "cpu", "memory", "disk", "network", "process", "python", "system", "health_checks",
     }))
@@ -150,28 +150,28 @@ class AdminConfig:
         monitoring_raw = raw.get("monitoring_config", {})
         sidebar_raw = raw.get("sidebar_sections", {})
 
-        # Defaults for modules
+        # Defaults for modules (monitoring & audit disabled by default)
         default_modules = {
             "dashboard": True, "orm": True, "build": True,
             "migrations": True, "config": True, "workspace": True,
-            "permissions": True, "monitoring": True, "admin_users": True,
-            "profile": True, "audit": True,
+            "permissions": True, "monitoring": False, "admin_users": True,
+            "profile": True, "audit": False,
         }
         modules = {**default_modules, **modules_raw}
 
-        # If enable_audit is False at top level, override audit module
-        if not raw.get("enable_audit", True):
-            modules["audit"] = False
+        # If enable_audit is explicitly provided at top level, honour it
+        if "enable_audit" in raw:
+            modules["audit"] = bool(raw["enable_audit"])
 
         return cls(
             modules=modules,
-            audit_enabled=audit_raw.get("enabled", raw.get("enable_audit", True)),
+            audit_enabled=audit_raw.get("enabled", raw.get("enable_audit", False)),
             audit_max_entries=audit_raw.get("max_entries", raw.get("audit_max_entries", 10_000)),
             audit_log_logins=audit_raw.get("log_logins", True),
             audit_log_views=audit_raw.get("log_views", True),
             audit_log_searches=audit_raw.get("log_searches", True),
             audit_excluded_actions=frozenset(audit_raw.get("excluded_actions", [])),
-            monitoring_enabled=monitoring_raw.get("enabled", True),
+            monitoring_enabled=monitoring_raw.get("enabled", False),
             monitoring_metrics=frozenset(monitoring_raw.get("metrics", [
                 "cpu", "memory", "disk", "network", "process", "python", "system", "health_checks",
             ])),
