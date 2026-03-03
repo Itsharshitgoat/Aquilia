@@ -60,24 +60,63 @@ def _is_tty() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
+# Cached fd for stdin so we don't keep calling fileno()
+_STDIN_FD: int = -1
+
+
+def _stdin_fd() -> int:
+    global _STDIN_FD
+    if _STDIN_FD < 0:
+        _STDIN_FD = sys.stdin.fileno()
+    return _STDIN_FD
+
+
+def _drain_stdin() -> None:
+    """
+    Discard any bytes already sitting in the OS stdin buffer.
+
+    This is critical between a cooked-mode readline() and a raw-mode
+    os.read() loop: without it, bytes typed ahead (or leftover echo
+    from arrow keys pressed during the previous prompt) are fed into
+    the raw reader and misinterpreted.
+    """
+    import termios
+    try:
+        termios.tcflush(_stdin_fd(), termios.TCIFLUSH)
+    except Exception:
+        pass
+
+
 def _read_key() -> str:
     """
-    Read a single keypress in raw mode.
+    Read a single keypress in raw mode via the OS file descriptor.
+
+    Never goes through Python's buffered stdin so there is no mismatch
+    between what the buffer holds and what the fd delivers.
 
     Returns one of:
-      'up', 'down', 'enter', 'space', 'shift_tab', 'esc', or the literal char.
+      'up', 'down', 'enter', 'space', 'tab', 'shift_tab', 'esc',
+      or the literal character.
     """
     import termios
     import tty
 
-    fd  = sys.stdin.fileno()
+    fd  = _stdin_fd()
     old = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
         ch = os.read(fd, 1)
         if ch == b"\x1b":                       # ESC / arrow sequence
+            # Set a short read timeout so we don't hang if ESC is pressed alone
+            import select as _sel
+            ready, _, _ = _sel.select([fd], [], [], 0.1)
+            if not ready:
+                return "esc"
             ch2 = os.read(fd, 1)
             if ch2 == b"[":
+                ready2, _, _ = _sel.select([fd], [], [], 0.1)
+                if not ready2:
+                    return "esc"
                 ch3 = os.read(fd, 1)
                 if ch3 == b"A":
                     return "up"
@@ -85,6 +124,12 @@ def _read_key() -> str:
                     return "down"
                 if ch3 == b"Z":
                     return "shift_tab"
+                # Drain any remaining bytes of unknown sequence
+                while True:
+                    r, _, _ = _sel.select([fd], [], [], 0.05)
+                    if not r:
+                        break
+                    os.read(fd, 16)
                 return "esc"
             return "esc"
         if ch in (b"\r", b"\n"):
@@ -102,8 +147,47 @@ def _read_key() -> str:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
+def _read_line_fd() -> str:
+    """
+    Read one line directly from the OS stdin fd in canonical (cooked) mode.
+
+    Unlike sys.stdin.readline() this bypasses Python's TextIOWrapper
+    buffer, so there are no stale bytes left in a layer that os.read()
+    can't see.  The terminal's line discipline still handles editing
+    (backspace, etc.) because we are NOT in raw mode here.
+    """
+    import termios
+    fd  = _stdin_fd()
+    old = termios.tcgetattr(fd)
+    # Ensure canonical mode + echo are ON (reset any lingering raw state)
+    new = termios.tcgetattr(fd)
+    new[3] |= termios.ICANON | termios.ECHO   # lflags
+    termios.tcsetattr(fd, termios.TCSANOW, new)
+    try:
+        buf = b""
+        while True:
+            ch = os.read(fd, 1)
+            if ch in (b"\r", b"\n"):
+                break
+            if ch == b"\x03":
+                raise KeyboardInterrupt
+            if ch == b"\x04":
+                if not buf:
+                    raise EOFError
+                break
+            buf += ch
+        return buf.decode("utf-8", errors="replace")
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
 def _read_line() -> str:
-    """Read a full line in cooked mode."""
+    """Read a full line — uses fd-based reader on TTY, fallback on pipes."""
+    if _is_tty():
+        try:
+            return _read_line_fd()
+        except Exception:
+            pass
     try:
         return sys.stdin.readline().rstrip("\n")
     except (EOFError, KeyboardInterrupt):
@@ -303,6 +387,7 @@ def select(
     hint   = _c("↑↓ navigate  Enter confirm", dim_=True)
     header = f"  {_c('◆', fg='cyan')} {_c(label, fg='white', bold=True)}  {hint}\n"
 
+    _drain_stdin()   # flush buffered bytes from any preceding cooked prompt
     _write(_HIDE_CURSOR)
     try:
         _write(header)
@@ -392,6 +477,7 @@ def multi_select(
     hint   = _c("↑↓ navigate  Space toggle  Enter confirm", dim_=True)
     header = f"  {_c('◆', fg='cyan')} {_c(label, fg='white', bold=True)}  {hint}\n"
 
+    _drain_stdin()   # flush buffered bytes from any preceding cooked prompt
     _write(_HIDE_CURSOR)
     try:
         _write(header)
