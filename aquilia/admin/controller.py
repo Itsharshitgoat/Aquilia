@@ -45,6 +45,7 @@ from .templates import (
     render_permissions_page,
     render_workspace_page,
     render_monitoring_page,
+    render_error_page,
 )
 
 if TYPE_CHECKING:
@@ -387,8 +388,15 @@ class AdminController(Controller):
                 identity=identity,
             )
         except Exception as e:
+            app_list = self.site.get_app_list(identity)
             return _html_response(
-                render_login_page(error=f"Error: {e}"),
+                render_error_page(
+                    status=404,
+                    title="Not Found",
+                    message=str(e),
+                    app_list=app_list,
+                    identity_name=_get_identity_name(identity),
+                ),
                 404,
             )
 
@@ -452,7 +460,17 @@ class AdminController(Controller):
             model_cls = self.site.get_model_class(model)
             admin = self.site.get_model_admin(model_cls)
         except Exception as e:
-            return _html_response(str(e), 404)
+            app_list = self.site.get_app_list(identity)
+            return _html_response(
+                render_error_page(
+                    status=404,
+                    title="Not Found",
+                    message=str(e),
+                    app_list=app_list,
+                    identity_name=_get_identity_name(identity),
+                ),
+                404,
+            )
 
         # Build empty field data for form
         fields_data = []
@@ -502,7 +520,17 @@ class AdminController(Controller):
                 model_cls = self.site.get_model_class(model)
                 admin = self.site.get_model_admin(model_cls)
             except Exception:
-                return _html_response(str(e), 400)
+                app_list = self.site.get_app_list(identity)
+                return _html_response(
+                    render_error_page(
+                        status=400,
+                        title="Error",
+                        message=str(e),
+                        app_list=app_list,
+                        identity_name=_get_identity_name(identity),
+                    ),
+                    400,
+                )
 
             fields_data = []
             for field_name in admin.get_fields():
@@ -547,7 +575,17 @@ class AdminController(Controller):
         try:
             data = await self.site.get_record(model, pk, identity=identity)
         except Exception as e:
-            return _html_response(str(e), 404)
+            app_list = self.site.get_app_list(identity)
+            return _html_response(
+                render_error_page(
+                    status=404,
+                    title="Not Found",
+                    message=str(e),
+                    app_list=app_list,
+                    identity_name=_get_identity_name(identity),
+                ),
+                404,
+            )
 
         # Audit: log record view
         if identity and self.site.audit_log:
@@ -594,7 +632,17 @@ class AdminController(Controller):
             try:
                 data = await self.site.get_record(model, pk, identity=identity)
             except Exception:
-                return _html_response(str(e), 400)
+                app_list = self.site.get_app_list(identity)
+                return _html_response(
+                    render_error_page(
+                        status=400,
+                        title="Error",
+                        message=str(e),
+                        app_list=app_list,
+                        identity_name=_get_identity_name(identity),
+                    ),
+                    400,
+                )
 
             app_list = self.site.get_app_list(identity)
             html = render_form_view(
@@ -637,6 +685,9 @@ class AdminController(Controller):
                 )
         except Exception as e:
             logger.warning("Admin delete failed: %s", e)
+            if ctx.session and hasattr(ctx.session, "data"):
+                ctx.session.data["_admin_flash"] = str(e)
+                ctx.session.data["_admin_flash_type"] = "error"
 
         return _redirect(f"/admin/{model.lower()}/")
 
@@ -709,7 +760,17 @@ class AdminController(Controller):
                 model, page=1, per_page=10000, identity=identity,
             )
         except Exception as e:
-            return _html_response(str(e), 404)
+            app_list = self.site.get_app_list(identity)
+            return _html_response(
+                render_error_page(
+                    status=404,
+                    title="Not Found",
+                    message=str(e),
+                    app_list=app_list,
+                    identity_name=_get_identity_name(identity),
+                ),
+                404,
+            )
 
         rows = data.get("rows", [])
         columns = data.get("list_display", [])

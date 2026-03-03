@@ -508,6 +508,47 @@ def render_monitoring_page(
 <p>CPU: {cpu_pct}% · Memory: {mem_pct}%</p></div></body></html>"""
 
 
+def render_error_page(
+    status: int = 404,
+    title: str = "Not Found",
+    message: str = "",
+    app_list: Optional[List[Dict[str, Any]]] = None,
+    identity_name: str = "Admin",
+    *,
+    site_title: str = "Aquilia Admin",
+    url_prefix: str = "/admin",
+) -> str:
+    """Render a styled admin error page (404, 403, 400, etc.).
+
+    Instead of returning raw text for errors, this renders the error
+    inside the full admin layout with sidebar, header, and navigation
+    so the user stays in-context and can easily navigate back.
+    """
+    if _HAS_JINJA2:
+        return _render_template(
+            "error.html",
+            status=status,
+            title=title,
+            message=message,
+            app_list=app_list or [],
+            active_page="",
+            identity_name=identity_name,
+            site_title=site_title,
+            url_prefix=url_prefix,
+            page_title=title,
+        )
+    esc_title = html.escape(title)
+    esc_msg = html.escape(message) if message else ""
+    msg_block = f'<p style="margin-top:12px;color:#a1a1aa;font-size:.9rem">{esc_msg}</p>' if esc_msg else ""
+    return f"""<!DOCTYPE html><html lang="en" data-theme="dark"><head>
+<meta charset="UTF-8"><title>{status} {esc_title} — Aquilia Admin</title><style>{_FALLBACK_CSS}</style></head>
+<body><div style="padding:48px;text-align:center">
+<div style="font-size:6rem;font-weight:800;opacity:.15;color:#22c55e">{status}</div>
+<h1>{esc_title}</h1>{msg_block}
+<p style="margin-top:24px"><a href="{url_prefix}/" style="color:#22c55e">← Back to Dashboard</a></p>
+</div></body></html>"""
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Inline fallbacks (when Jinja2 is not installed)
 # ═══════════════════════════════════════════════════════════════════════════

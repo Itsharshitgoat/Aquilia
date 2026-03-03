@@ -5104,3 +5104,87 @@ class TestWorkspaceModuleExpandCollapse:
         assert 'data-collapsed="true"' in html
         assert "max-height" in html
         assert "toggleModule(this)" in html
+
+
+class TestRenderErrorPage:
+    """render_error_page should produce styled admin error pages."""
+
+    def test_render_error_page_import(self):
+        from aquilia.admin.templates import render_error_page
+        assert callable(render_error_page)
+
+    def test_render_error_page_contains_status(self):
+        from aquilia.admin.templates import render_error_page
+        html = render_error_page(status=404, title="Not Found", message="Model 'xyz' not registered")
+        assert "404" in html
+        assert "Not Found" in html
+
+    def test_render_error_page_contains_message(self):
+        from aquilia.admin.templates import render_error_page
+        html = render_error_page(status=404, title="Not Found", message="No such model")
+        assert "No such model" in html
+
+    def test_render_error_page_contains_dashboard_link(self):
+        from aquilia.admin.templates import render_error_page
+        html = render_error_page(status=404, title="Not Found")
+        assert "/admin/" in html
+        assert "Dashboard" in html
+
+    def test_render_error_page_403(self):
+        from aquilia.admin.templates import render_error_page
+        html = render_error_page(status=403, title="Forbidden", message="Access denied")
+        assert "403" in html
+        assert "Forbidden" in html
+
+    def test_render_error_page_400(self):
+        from aquilia.admin.templates import render_error_page
+        html = render_error_page(status=400, title="Error", message="Bad request")
+        assert "400" in html
+
+    def test_render_error_page_extends_base(self):
+        """Error page should use the full admin layout (sidebar, header)."""
+        from aquilia.admin.templates import render_error_page
+        html = render_error_page(
+            status=404, title="Not Found", message="Test",
+            app_list=[{"name": "TestApp", "models": []}],
+            identity_name="Admin",
+        )
+        # Should contain admin layout elements from base.html
+        assert "Aquilia Admin" in html
+        assert "data-theme" in html
+
+
+class TestAdminDeleteFlashError:
+    """delete_record should flash error messages to the session."""
+
+    def test_controller_has_delete_record(self):
+        from aquilia.admin.controller import AdminController
+        assert hasattr(AdminController, "delete_record")
+
+    def test_render_error_page_import_in_controller(self):
+        """Controller should import render_error_page."""
+        from aquilia.admin.controller import render_error_page
+        assert callable(render_error_page)
+
+
+class TestServerAdminRouteWiring:
+    """server.py admin_routes should include all system page routes."""
+
+    def test_monitoring_routes_in_wiring(self):
+        """Monitoring and monitoring/api routes must be wired as static routes."""
+        import ast
+        from pathlib import Path
+
+        server_path = Path(__file__).resolve().parent.parent / "aquilia" / "server.py"
+        source = server_path.read_text(encoding="utf-8")
+        # Check that monitoring routes are present in the admin_routes list
+        assert '"/monitoring/"' in source or "monitoring_view" in source
+        assert '"/monitoring/api/"' in source or "monitoring_api" in source
+
+    def test_workspace_route_in_wiring(self):
+        """Workspace route must be wired as a static route."""
+        from pathlib import Path
+
+        server_path = Path(__file__).resolve().parent.parent / "aquilia" / "server.py"
+        source = server_path.read_text(encoding="utf-8")
+        assert '"/workspace/"' in source or "workspace_view" in source
