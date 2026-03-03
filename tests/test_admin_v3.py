@@ -4584,14 +4584,31 @@ class TestWorkspaceDataMethod:
         assert "total_integrations" in stats
 
     def test_get_workspace_data_has_workspace_info(self):
+        import sys
+        import tempfile
+        from pathlib import Path
         from aquilia.admin.site import AdminSite
-        site = AdminSite()
-        site._initialized = True
-        data = site.get_workspace_data()
-        ws = data["workspace"]
-        assert isinstance(ws, dict)
-        assert "name" in ws
-        assert "python_version" in ws
+
+        # Create a minimal workspace.py so the test is not filesystem-dependent
+        with tempfile.TemporaryDirectory() as tmp:
+            ws_file = Path(tmp) / "workspace.py"
+            ws_file.write_text(
+                'from aquilia import Workspace\n'
+                'app = Workspace("test-workspace", version="1.0.0")\n'
+            )
+            old_cwd = Path.cwd()
+            import os
+            os.chdir(tmp)
+            try:
+                site = AdminSite()
+                site._initialized = True
+                data = site.get_workspace_data()
+                ws = data["workspace"]
+                assert isinstance(ws, dict)
+                assert "name" in ws
+                assert "python_version" in ws
+            finally:
+                os.chdir(old_cwd)
 
     def test_classify_module_file(self):
         from aquilia.admin.site import AdminSite
