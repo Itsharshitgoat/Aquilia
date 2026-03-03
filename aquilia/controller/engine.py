@@ -97,7 +97,7 @@ class ControllerEngine:
         controller_class = route.controller_class
         route_metadata = route.route_metadata
 
-        # Fast path: monkeypatched handler (OpenAPI docs, etc.)
+        # Fast path: monkeypatched handler (OpenAPI docs, admin routes, etc.)
         if hasattr(route, "handler") and callable(route.handler):
             ctx = RequestCtx(
                 request=request,
@@ -105,7 +105,17 @@ class ControllerEngine:
                 session=request.state.get("session"),
                 container=container,
             )
-            result = await route.handler(request, ctx)
+            # Inject any path params the handler declares as positional args
+            if path_params:
+                import inspect as _inspect
+                try:
+                    sig = _inspect.signature(route.handler)
+                    extra = {k: v for k, v in path_params.items() if k in sig.parameters}
+                except (ValueError, TypeError):
+                    extra = {}
+                result = await route.handler(request, ctx, **extra)
+            else:
+                result = await route.handler(request, ctx)
             return self._to_response(result)
 
         # Build RequestCtx

@@ -74,7 +74,13 @@
             <div class="profile-avatar-wrap">
                 <div class="profile-avatar" id="profileAvatar">
                     {% if user.avatar_path %}
-                        <img src="{{ user.avatar_path }}"
+                        {# Normalise: old rows stored just the filename, new rows store the full path #}
+                        {% if user.avatar_path.startswith('/') %}
+                            {% set avatar_src = user.avatar_path %}
+                        {% else %}
+                            {% set avatar_src = (url_prefix|default('/admin')) + '/profile/avatar/' + user.avatar_path %}
+                        {% endif %}
+                        <img src="{{ avatar_src }}"
                              alt="Profile photo" id="avatarImg">
                     {% else %}
                         <span id="avatarInitials">{{ (user.first_name or user.username)|truncate(1,True,'')|upper }}{{ (user.last_name or '')|truncate(1,True,'')|upper }}</span>
