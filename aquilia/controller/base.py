@@ -75,10 +75,18 @@ class RequestCtx:
     async def json(self) -> Any:
         """Parse request body as JSON."""
         return await self.request.json()
-    
+
+    async def body(self) -> bytes:
+        """Read raw request body bytes."""
+        return await self.request.body()
+
     async def form(self) -> Dict[str, Any]:
         """Parse request body as form data."""
         return await self.request.form()
+
+    async def multipart(self):
+        """Parse multipart/form-data (file uploads)."""
+        return await self.request.multipart()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

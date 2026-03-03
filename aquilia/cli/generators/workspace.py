@@ -579,9 +579,8 @@ class WorkspaceGenerator:
                 .integrate(Integration.patterns())
 
                 # Database - Configure the ORM backend
-                # Uncomment and set the connection URL for your database.
                 .integrate(Integration.database(
-                    # url="sqlite:///db.sqlite3",     # SQLite (dev)
+                    url="sqlite:///db.sqlite3",       # SQLite (dev)
                     # url="postgresql://user:pass@localhost:5432/{self.name}",  # PostgreSQL
                     pool_size=5,
                     echo=False,

@@ -1166,7 +1166,7 @@ def migrate(ctx, source: str, dry_run: bool):
 @cli.command('doctor')
 @click.option('--json', 'as_json', is_flag=True, help='Output results as JSON')
 @click.pass_context
-def doctor(ctx):
+def doctor(ctx, as_json: bool):
     """Diagnose workspace issues.
 
     Performs comprehensive health checks across all layers:
