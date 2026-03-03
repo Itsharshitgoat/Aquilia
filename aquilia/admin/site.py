@@ -8,6 +8,7 @@ It manages:
 - Audit log
 - Template rendering integration
 - Permission checks
+- Module visibility configuration (AdminConfig)
 
 Design: Singleton pattern with lazy initialization.
 """
@@ -15,7 +16,8 @@ Design: Singleton pattern with lazy initialization.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Type, TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Type, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aquilia.models.base import Model
@@ -34,6 +36,156 @@ from .faults import (
 from aquilia.controller.pagination import PageNumberPagination
 
 logger = logging.getLogger("aquilia.admin.site")
+
+
+# ── AdminConfig — Parsed, immutable admin configuration ──────────────────────
+
+@dataclass(frozen=True)
+class AdminConfig:
+    """
+    Immutable admin configuration parsed from ``Integration.admin()`` config dict.
+
+    Provides a clean, typed API for checking which modules/features
+    are enabled without digging through raw config dicts.
+    """
+
+    # Module visibility
+    modules: Dict[str, bool] = field(default_factory=lambda: {
+        "dashboard": True, "orm": True, "build": True,
+        "migrations": True, "config": True, "workspace": True,
+        "permissions": True, "monitoring": True, "admin_users": True,
+        "profile": True, "audit": True,
+    })
+
+    # Audit settings
+    audit_enabled: bool = True
+    audit_max_entries: int = 10_000
+    audit_log_logins: bool = True
+    audit_log_views: bool = True
+    audit_log_searches: bool = True
+    audit_excluded_actions: FrozenSet[str] = field(default_factory=frozenset)
+
+    # Monitoring settings
+    monitoring_enabled: bool = True
+    monitoring_metrics: FrozenSet[str] = field(default_factory=lambda: frozenset({
+        "cpu", "memory", "disk", "network", "process", "python", "system", "health_checks",
+    }))
+    monitoring_refresh_interval: int = 30
+
+    # Sidebar section visibility
+    sidebar_sections: Dict[str, bool] = field(default_factory=lambda: {
+        "overview": True, "data": True, "system": True,
+        "security": True, "models": True,
+    })
+
+    # UI
+    theme: str = "auto"
+    list_per_page: int = 25
+
+    def is_module_enabled(self, module_name: str) -> bool:
+        """Check if an admin module is enabled.
+
+        Normalises ``admin-users`` → ``admin_users`` for convenience.
+        """
+        key = module_name.replace("-", "_")
+        return self.modules.get(key, False)
+
+    def is_action_allowed(self, action: "AdminAction") -> bool:
+        """Return True if the given audit action should be recorded."""
+        if not self.audit_enabled:
+            return False
+        action_name = action.value if hasattr(action, "value") else str(action)
+        # Normalise to uppercase for comparison — AdminAction values are
+        # lowercase (e.g. "view") but config uses uppercase (e.g. "VIEW").
+        action_upper = action_name.upper()
+        if action_upper in self.audit_excluded_actions:
+            return False
+        # Also check the original value in case user passed lowercase
+        if action_name in self.audit_excluded_actions:
+            return False
+        # Category-level switches
+        if action_upper in ("LOGIN", "LOGOUT", "LOGIN_FAILED") and not self.audit_log_logins:
+            return False
+        if action_upper in ("VIEW", "LIST") and not self.audit_log_views:
+            return False
+        if action_upper == "SEARCH" and not self.audit_log_searches:
+            return False
+        return True
+
+    def is_metric_enabled(self, metric: str) -> bool:
+        """Check if a monitoring metric section is enabled."""
+        return metric in self.monitoring_metrics
+
+    def is_sidebar_section_visible(self, section: str) -> bool:
+        """Check if a sidebar section is visible."""
+        return self.sidebar_sections.get(section, True)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialise the config for template consumption."""
+        return {
+            "modules": dict(self.modules),
+            "audit": {
+                "enabled": self.audit_enabled,
+                "max_entries": self.audit_max_entries,
+                "log_logins": self.audit_log_logins,
+                "log_views": self.audit_log_views,
+                "log_searches": self.audit_log_searches,
+                "excluded_actions": sorted(self.audit_excluded_actions),
+            },
+            "monitoring": {
+                "enabled": self.monitoring_enabled,
+                "metrics": sorted(self.monitoring_metrics),
+                "refresh_interval": self.monitoring_refresh_interval,
+            },
+            "sidebar_sections": dict(self.sidebar_sections),
+            "theme": self.theme,
+            "list_per_page": self.list_per_page,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Dict[str, Any]) -> "AdminConfig":
+        """Build an AdminConfig from the raw Integration.admin() config dict."""
+        modules_raw = raw.get("modules", {})
+        audit_raw = raw.get("audit_config", {})
+        monitoring_raw = raw.get("monitoring_config", {})
+        sidebar_raw = raw.get("sidebar_sections", {})
+
+        # Defaults for modules
+        default_modules = {
+            "dashboard": True, "orm": True, "build": True,
+            "migrations": True, "config": True, "workspace": True,
+            "permissions": True, "monitoring": True, "admin_users": True,
+            "profile": True, "audit": True,
+        }
+        modules = {**default_modules, **modules_raw}
+
+        # If enable_audit is False at top level, override audit module
+        if not raw.get("enable_audit", True):
+            modules["audit"] = False
+
+        return cls(
+            modules=modules,
+            audit_enabled=audit_raw.get("enabled", raw.get("enable_audit", True)),
+            audit_max_entries=audit_raw.get("max_entries", raw.get("audit_max_entries", 10_000)),
+            audit_log_logins=audit_raw.get("log_logins", True),
+            audit_log_views=audit_raw.get("log_views", True),
+            audit_log_searches=audit_raw.get("log_searches", True),
+            audit_excluded_actions=frozenset(audit_raw.get("excluded_actions", [])),
+            monitoring_enabled=monitoring_raw.get("enabled", True),
+            monitoring_metrics=frozenset(monitoring_raw.get("metrics", [
+                "cpu", "memory", "disk", "network", "process", "python", "system", "health_checks",
+            ])),
+            monitoring_refresh_interval=monitoring_raw.get("refresh_interval", 30),
+            sidebar_sections={
+                "overview": sidebar_raw.get("overview", True),
+                "data": sidebar_raw.get("data", True),
+                "system": sidebar_raw.get("system", True),
+                "security": sidebar_raw.get("security", True),
+                "models": sidebar_raw.get("models", True),
+            },
+            theme=raw.get("theme", "auto"),
+            list_per_page=raw.get("list_per_page", 25),
+        )
 
 
 class AdminSite:
@@ -70,6 +222,9 @@ class AdminSite:
 
         # Registry: model_class -> ModelAdmin instance
         self._registry: Dict[Type[Model], ModelAdmin] = {}
+
+        # Admin configuration — populated by server._wire_admin_integration()
+        self.admin_config: AdminConfig = AdminConfig()
 
         # Audit log — model-backed (persists to DB), falls back to in-memory
         self.audit_log: ModelBackedAuditLog = ModelBackedAuditLog()
@@ -1055,6 +1210,17 @@ class AdminSite:
                     result["health_checks"].append(status.to_dict())
         except Exception:
             pass
+
+        # ── Filter by admin_config.monitoring_metrics ──
+        # Only keep metric sections the user has opted-in to.
+        cfg = self.admin_config
+        all_sections = ("cpu", "memory", "disk", "network", "process", "python", "system", "health_checks")
+        for section in all_sections:
+            if not cfg.is_metric_enabled(section):
+                result[section] = {} if section != "health_checks" else []
+
+        # Attach refresh interval for the frontend
+        result["_refresh_interval"] = cfg.monitoring_refresh_interval
 
         return result
 

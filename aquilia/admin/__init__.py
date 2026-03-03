@@ -64,7 +64,7 @@ Usage:
 
 __version__ = "1.0.0"
 
-from .site import AdminSite
+from .site import AdminSite, AdminConfig
 from .options import ModelAdmin
 from .registry import register, autodiscover
 from .permissions import AdminPermission, AdminRole
@@ -100,6 +100,7 @@ from .di_providers import register_admin_providers
 __all__ = [
     # Core
     "AdminSite",
+    "AdminConfig",
     "ModelAdmin",
     
     # Registration

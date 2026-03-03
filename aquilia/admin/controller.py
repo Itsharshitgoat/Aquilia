@@ -211,6 +211,20 @@ class AdminController(Controller):
         if not self.site._initialized:
             self.site.initialize()
 
+    def _module_disabled_response(self, module: str, identity) -> Response:
+        """Return a styled 404 error page when a module is disabled."""
+        app_list = self.site.get_app_list(identity) if identity else []
+        return _html_response(
+            render_error_page(
+                status=404,
+                title="Module Disabled",
+                message=f"The '{module}' module is disabled in admin configuration.",
+                app_list=app_list,
+                identity_name=_get_identity_name(identity),
+            ),
+            404,
+        )
+
     # ── Dashboard ────────────────────────────────────────────────────
 
     @GET("/")
@@ -880,6 +894,9 @@ class AdminController(Controller):
         if denied:
             return denied
 
+        if not self.site.admin_config.is_module_enabled("orm"):
+            return self._module_disabled_response("ORM Models", identity)
+
         self._ensure_initialized()
 
         app_list = self.site.get_app_list(identity)
@@ -902,6 +919,9 @@ class AdminController(Controller):
         identity, denied = _require_identity(ctx)
         if denied:
             return denied
+
+        if not self.site.admin_config.is_module_enabled("build"):
+            return self._module_disabled_response("Build", identity)
 
         self._ensure_initialized()
 
@@ -928,6 +948,9 @@ class AdminController(Controller):
         if denied:
             return denied
 
+        if not self.site.admin_config.is_module_enabled("migrations"):
+            return self._module_disabled_response("Migrations", identity)
+
         self._ensure_initialized()
 
         migrations = self.site.get_migrations_data()
@@ -948,6 +971,9 @@ class AdminController(Controller):
         identity, denied = _require_identity(ctx)
         if denied:
             return denied
+
+        if not self.site.admin_config.is_module_enabled("config"):
+            return self._module_disabled_response("Configuration", identity)
 
         self._ensure_initialized()
 
@@ -970,6 +996,9 @@ class AdminController(Controller):
         identity, denied = _require_identity(ctx)
         if denied:
             return denied
+
+        if not self.site.admin_config.is_module_enabled("workspace"):
+            return self._module_disabled_response("Workspace", identity)
 
         self._ensure_initialized()
 
@@ -1004,6 +1033,9 @@ class AdminController(Controller):
         identity, denied = _require_identity(ctx)
         if denied:
             return denied
+
+        if not self.site.admin_config.is_module_enabled("permissions"):
+            return self._module_disabled_response("Permissions", identity)
 
         self._ensure_initialized()
 
@@ -1076,6 +1108,9 @@ class AdminController(Controller):
         if denied:
             return denied
 
+        if not self.site.admin_config.is_module_enabled("audit"):
+            return self._module_disabled_response("Audit Log", identity)
+
         if not has_admin_permission(identity, AdminPermission.AUDIT_VIEW):
             return _redirect("/admin/")
 
@@ -1122,6 +1157,9 @@ class AdminController(Controller):
         if denied:
             return denied
 
+        if not self.site.admin_config.is_module_enabled("monitoring"):
+            return self._module_disabled_response("Monitoring", identity)
+
         self._ensure_initialized()
 
         monitoring_data = self.site.get_monitoring_data()
@@ -1145,6 +1183,13 @@ class AdminController(Controller):
                 headers={"content-type": "application/json"},
             )
 
+        if not self.site.admin_config.is_module_enabled("monitoring"):
+            return Response(
+                content=b'{"error":"monitoring disabled"}',
+                status=404,
+                headers={"content-type": "application/json"},
+            )
+
         self._ensure_initialized()
 
         import json as _json
@@ -1163,6 +1208,9 @@ class AdminController(Controller):
         identity, denied = _require_identity(ctx)
         if denied:
             return denied
+
+        if not self.site.admin_config.is_module_enabled("admin_users"):
+            return self._module_disabled_response("Admin Users", identity)
 
         if not has_admin_permission(identity, AdminPermission.USER_MANAGE):
             return _redirect("/admin/")
@@ -1440,6 +1488,9 @@ class AdminController(Controller):
         identity, denied = _require_identity(ctx)
         if denied:
             return denied
+
+        if not self.site.admin_config.is_module_enabled("profile"):
+            return self._module_disabled_response("Profile", identity)
 
         self._ensure_initialized()
 

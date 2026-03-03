@@ -68,7 +68,19 @@ def _render_template(template_name: str, **ctx: Any) -> str:
 
     Uses Aquilia TemplateEngine when available, plain Jinja2 otherwise.
     Raises RuntimeError when neither is installed.
+
+    Automatically injects ``admin_config`` from the AdminSite singleton
+    if not already present in the context, so sidebar and templates can
+    conditionally render modules.
     """
+    if "admin_config" not in ctx:
+        try:
+            from .site import AdminSite
+            site = AdminSite.default()
+            ctx["admin_config"] = site.admin_config.to_dict()
+        except Exception:
+            ctx["admin_config"] = {}
+
     if _admin_engine is not None:
         # Synchronous render via the framework engine
         return _admin_engine.render_sync(template_name, ctx)

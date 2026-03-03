@@ -82,15 +82,23 @@
                                 </div>
                             </div>
                             <div class="topbar-dropdown-divider"></div>
+                            {% set _ac = admin_config|default({}) %}
+                            {% set _mods = _ac.get('modules', {}) if _ac is mapping else {} %}
+                            {% if _mods.get('profile', true) %}
                             <a href="{{ url_prefix|default('/admin') }}/profile/" class="topbar-dropdown-item">
                                 <i class="icon-user" style="font-size:15px;"></i> Profile
                             </a>
+                            {% endif %}
+                            {% if _mods.get('admin_users', true) %}
                             <a href="{{ url_prefix|default('/admin') }}/admin-users/" class="topbar-dropdown-item">
                                 <i class="icon-users" style="font-size:15px;"></i> Admin Users
                             </a>
+                            {% endif %}
+                            {% if _mods.get('permissions', true) %}
                             <a href="{{ url_prefix|default('/admin') }}/permissions/" class="topbar-dropdown-item">
                                 <i class="icon-shield" style="font-size:15px;"></i> Permissions
                             </a>
+                            {% endif %}
                             <div class="topbar-dropdown-divider"></div>
                             <a href="{{ url_prefix|default('/admin') }}/logout" class="topbar-dropdown-item topbar-dropdown-danger">
                                 <i class="icon-log-out" style="font-size:15px;"></i> Logout

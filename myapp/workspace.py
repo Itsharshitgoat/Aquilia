@@ -129,6 +129,20 @@ workspace = (
         url_prefix="/admin",
         site_title="myapp Admin",
         auto_discover=True,
+        # ── Module Visibility ──
+        # Disable pages you don't need:
+        # enable_build=False,
+        # enable_migrations=False,
+        # ── Audit Configuration ──
+        # enable_audit=True,
+        # audit_log_logins=True,
+        # audit_log_views=False,         # Don't log read-only access
+        # audit_log_searches=False,      # Don't log search queries
+        # audit_excluded_actions=["VIEW", "LIST"],
+        # ── Monitoring Configuration ──
+        # enable_monitoring=True,
+        # monitoring_metrics=["cpu", "memory", "system"],  # Subset of metrics
+        # monitoring_refresh_interval=15,
     ))
 
     .integrate(

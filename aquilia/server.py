@@ -1610,6 +1610,9 @@ class AquiliaServer:
         and mounts all AdminController routes using the same CompiledRoute injection
         pattern as ``_register_docs_routes()``.
 
+        Respects the ``modules`` config to conditionally register only the
+        routes for enabled admin modules (ORM, Build, Monitoring, etc.).
+
         This is the critical bridge between ``Workspace.integrate(Integration.admin(...))``
         and actual HTTP route serving.
         """
@@ -1623,50 +1626,86 @@ class AquiliaServer:
 
         try:
             from .admin.controller import AdminController
-            from .admin.site import AdminSite
+            from .admin.site import AdminSite, AdminConfig
             from .controller.metadata import RouteMetadata
             from .controller.compiler import CompiledRoute
             from .patterns import parse_pattern, PatternCompiler
 
             pc = PatternCompiler()
 
+            # ── Parse AdminConfig from the raw dict ──────────────────────
+            parsed_config = AdminConfig.from_dict(admin_config)
+
             # Configure the AdminSite singleton
             site = AdminSite.default()
             site.title = site_title
             site.url_prefix = url_prefix
+            site.admin_config = parsed_config
+
+            # Wire the config into the audit log so it can filter actions
+            site.audit_log.admin_config = parsed_config
+
             if auto_discover:
                 site.initialize()
 
             # Create a controller instance
             ctrl = AdminController(site=site)
 
+            # Helper: check if a module is enabled in the parsed config
+            def _mod(name: str) -> bool:
+                return parsed_config.is_module_enabled(name)
+
             # Define all admin routes: (method, path, handler_name, handler_func)
             # Static routes MUST appear before dynamic /{model}/ routes so the
             # router indexes them in _static_routes (O(1) lookup) and they are
             # never shadowed by the <model:str> catch-all.
+            #
+            # Routes for disabled modules are simply not registered, yielding
+            # a 404 — clean and secure.
             admin_routes = [
+                # Always registered (core admin)
                 ("GET",  f"{url_prefix}/",                  "dashboard",        ctrl.dashboard),
                 ("GET",  f"{url_prefix}/login",             "login_page",       ctrl.login_page),
                 ("POST", f"{url_prefix}/login",             "login_submit",     ctrl.login_submit),
                 ("GET",  f"{url_prefix}/logout",            "logout",           ctrl.logout),
-                ("GET",  f"{url_prefix}/orm/",              "orm_view",         ctrl.orm_view),
-                ("GET",  f"{url_prefix}/build/",            "build_view",       ctrl.build_view),
-                ("GET",  f"{url_prefix}/migrations/",       "migrations_view",  ctrl.migrations_view),
-                ("GET",  f"{url_prefix}/config/",           "config_view",      ctrl.config_view),
-                ("GET",  f"{url_prefix}/permissions/",      "permissions_view", ctrl.permissions_view),
-                ("POST", f"{url_prefix}/permissions/update", "permissions_update", ctrl.permissions_update),
-                ("GET",  f"{url_prefix}/audit/",            "audit_view",       ctrl.audit_view),
-                ("GET",  f"{url_prefix}/workspace/",        "workspace_view",   ctrl.workspace_view),
-                ("GET",  f"{url_prefix}/monitoring/",       "monitoring_view",  ctrl.monitoring_view),
-                ("GET",  f"{url_prefix}/monitoring/api/",   "monitoring_api",   ctrl.monitoring_api),
-                ("GET",  f"{url_prefix}/admin-users/",      "admin_users_view",        ctrl.admin_users_view),
-                ("POST", f"{url_prefix}/admin-users/create", "admin_users_create",     ctrl.admin_users_create),
-                ("POST", f"{url_prefix}/admin-users/toggle-status", "admin_users_toggle_status", ctrl.admin_users_toggle_status),
-                ("POST", f"{url_prefix}/admin-users/reset-password", "admin_users_reset_password", ctrl.admin_users_reset_password),
-                ("POST", f"{url_prefix}/admin-users/delete", "admin_users_delete",     ctrl.admin_users_delete),
-                ("GET",  f"{url_prefix}/profile/",          "profile_view",     ctrl.profile_view),
-                ("POST", f"{url_prefix}/profile/update",    "profile_update",   ctrl.profile_update),
-                ("POST", f"{url_prefix}/profile/change-password", "profile_change_password", ctrl.profile_change_password),
+            ]
+
+            # Conditionally register module routes
+            if _mod("orm"):
+                admin_routes.append(("GET", f"{url_prefix}/orm/", "orm_view", ctrl.orm_view))
+            if _mod("build"):
+                admin_routes.append(("GET", f"{url_prefix}/build/", "build_view", ctrl.build_view))
+            if _mod("migrations"):
+                admin_routes.append(("GET", f"{url_prefix}/migrations/", "migrations_view", ctrl.migrations_view))
+            if _mod("config"):
+                admin_routes.append(("GET", f"{url_prefix}/config/", "config_view", ctrl.config_view))
+            if _mod("permissions"):
+                admin_routes.append(("GET", f"{url_prefix}/permissions/", "permissions_view", ctrl.permissions_view))
+                admin_routes.append(("POST", f"{url_prefix}/permissions/update", "permissions_update", ctrl.permissions_update))
+            if _mod("audit"):
+                admin_routes.append(("GET", f"{url_prefix}/audit/", "audit_view", ctrl.audit_view))
+            if _mod("workspace"):
+                admin_routes.append(("GET", f"{url_prefix}/workspace/", "workspace_view", ctrl.workspace_view))
+            if _mod("monitoring"):
+                admin_routes.append(("GET", f"{url_prefix}/monitoring/", "monitoring_view", ctrl.monitoring_view))
+                admin_routes.append(("GET", f"{url_prefix}/monitoring/api/", "monitoring_api", ctrl.monitoring_api))
+            if _mod("admin_users"):
+                admin_routes.extend([
+                    ("GET",  f"{url_prefix}/admin-users/",              "admin_users_view",           ctrl.admin_users_view),
+                    ("POST", f"{url_prefix}/admin-users/create",        "admin_users_create",         ctrl.admin_users_create),
+                    ("POST", f"{url_prefix}/admin-users/toggle-status", "admin_users_toggle_status",  ctrl.admin_users_toggle_status),
+                    ("POST", f"{url_prefix}/admin-users/reset-password", "admin_users_reset_password", ctrl.admin_users_reset_password),
+                    ("POST", f"{url_prefix}/admin-users/delete",        "admin_users_delete",         ctrl.admin_users_delete),
+                ])
+            if _mod("profile"):
+                admin_routes.extend([
+                    ("GET",  f"{url_prefix}/profile/",               "profile_view",            ctrl.profile_view),
+                    ("POST", f"{url_prefix}/profile/update",         "profile_update",          ctrl.profile_update),
+                    ("POST", f"{url_prefix}/profile/change-password", "profile_change_password", ctrl.profile_change_password),
+                ])
+
+            # Model CRUD routes — always registered
+            admin_routes.extend([
                 ("GET",  f"{url_prefix}/<model:str>/export", "export_view",     ctrl.export_view),
                 ("POST", f"{url_prefix}/<model:str>/action", "bulk_action",     ctrl.bulk_action),
                 ("GET",  f"{url_prefix}/<model:str>/",      "list_view",        ctrl.list_view),
@@ -1675,7 +1714,7 @@ class AquiliaServer:
                 ("GET",  f"{url_prefix}/<model:str>/<pk:str>",        "edit_form",      ctrl.edit_form),
                 ("POST", f"{url_prefix}/<model:str>/<pk:str>",        "edit_submit",    ctrl.edit_submit),
                 ("POST", f"{url_prefix}/<model:str>/<pk:str>/delete", "delete_record",  ctrl.delete_record),
-            ]
+            ])
 
             registered_count = 0
             for method, path, handler_name, handler_func in admin_routes:

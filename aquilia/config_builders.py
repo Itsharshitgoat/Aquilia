@@ -820,6 +820,27 @@ class Integration:
         audit_max_entries: int = 10_000,
         list_per_page: int = 25,
         theme: str = "auto",
+        # ── Module Visibility ─────────────────────────────────────
+        enable_dashboard: bool = True,
+        enable_orm: bool = True,
+        enable_build: bool = True,
+        enable_migrations: bool = True,
+        enable_config: bool = True,
+        enable_workspace: bool = True,
+        enable_permissions: bool = True,
+        enable_monitoring: bool = True,
+        enable_admin_users: bool = True,
+        enable_profile: bool = True,
+        # ── Audit Configuration ───────────────────────────────────
+        audit_log_logins: bool = True,
+        audit_log_views: bool = True,
+        audit_log_searches: bool = True,
+        audit_excluded_actions: Optional[List[str]] = None,
+        # ── Monitoring Configuration ──────────────────────────────
+        monitoring_metrics: Optional[List[str]] = None,
+        monitoring_refresh_interval: int = 30,
+        # ── Sidebar Configuration ─────────────────────────────────
+        sidebar_sections: Optional[Dict[str, bool]] = None,
         **kwargs,
     ) -> Dict[str, Any]:
         """
@@ -838,6 +859,37 @@ class Integration:
             audit_max_entries: Max audit log entries (FIFO eviction).
             list_per_page: Default rows per page in list views.
             theme: Theme mode — ``"auto"``, ``"dark"``, or ``"light"``.
+
+            enable_dashboard: Show the Dashboard page (default True).
+            enable_orm: Show the ORM Models page (default True).
+            enable_build: Show the Build page (default True).
+            enable_migrations: Show the Migrations page (default True).
+            enable_config: Show the Configuration page (default True).
+            enable_workspace: Show the Workspace page (default True).
+            enable_permissions: Show the Permissions page (default True).
+            enable_monitoring: Show the Monitoring page (default True).
+            enable_admin_users: Show the Admin Users page (default True).
+            enable_profile: Show the Profile page (default True).
+
+            audit_log_logins: Record LOGIN/LOGOUT events (default True).
+            audit_log_views: Record VIEW/LIST events (default True).
+            audit_log_searches: Record SEARCH events (default True).
+            audit_excluded_actions: List of AdminAction names to never record.
+                Valid values: ``"LOGIN"``, ``"LOGOUT"``, ``"LOGIN_FAILED"``,
+                ``"VIEW"``, ``"LIST"``, ``"CREATE"``, ``"UPDATE"``,
+                ``"DELETE"``, ``"BULK_ACTION"``, ``"EXPORT"``,
+                ``"SETTINGS_CHANGE"``, ``"SEARCH"``, ``"PERMISSION_CHANGE"``.
+
+            monitoring_metrics: Which metric sections to collect.
+                Defaults to all: ``["cpu", "memory", "disk", "network",
+                "process", "python", "system", "health_checks"]``.
+                Pass a subset to reduce overhead.
+            monitoring_refresh_interval: Auto-refresh interval in seconds
+                for the monitoring dashboard (default 30).
+
+            sidebar_sections: Override sidebar section visibility.
+                Keys: ``"overview"``, ``"data"``, ``"system"``,
+                ``"security"``, ``"models"``. Values: bool.
             **kwargs: Additional admin configuration.
 
         Returns:
@@ -849,8 +901,69 @@ class Integration:
                 url_prefix="/admin",
                 site_title="MyApp Admin",
                 auto_discover=True,
+                # Disable pages you don't need
+                enable_build=False,
+                enable_migrations=False,
+                # Only log write operations
+                audit_log_views=False,
+                audit_log_searches=False,
+                audit_excluded_actions=["VIEW", "LIST"],
+                # Only monitor CPU and memory
+                monitoring_metrics=["cpu", "memory", "system"],
             ))
         """
+        _all_metrics = [
+            "cpu", "memory", "disk", "network",
+            "process", "python", "system", "health_checks",
+        ]
+
+        _default_sidebar = {
+            "overview": True,
+            "data": True,
+            "system": True,
+            "security": True,
+            "models": True,
+        }
+
+        # Merge user sidebar overrides with defaults
+        resolved_sidebar = {**_default_sidebar}
+        if sidebar_sections:
+            for k, v in sidebar_sections.items():
+                if k in resolved_sidebar:
+                    resolved_sidebar[k] = bool(v)
+
+        # Build enabled-modules map for quick lookup
+        modules = {
+            "dashboard": bool(enable_dashboard),
+            "orm": bool(enable_orm),
+            "build": bool(enable_build),
+            "migrations": bool(enable_migrations),
+            "config": bool(enable_config),
+            "workspace": bool(enable_workspace),
+            "permissions": bool(enable_permissions),
+            "monitoring": bool(enable_monitoring),
+            "admin_users": bool(enable_admin_users),
+            "profile": bool(enable_profile),
+            "audit": bool(enable_audit),
+        }
+
+        # Audit config
+        audit_config = {
+            "enabled": bool(enable_audit),
+            "max_entries": int(audit_max_entries),
+            "log_logins": bool(audit_log_logins),
+            "log_views": bool(audit_log_views),
+            "log_searches": bool(audit_log_searches),
+            "excluded_actions": list(audit_excluded_actions or []),
+        }
+
+        # Monitoring config
+        monitoring_config = {
+            "enabled": bool(enable_monitoring),
+            "metrics": list(monitoring_metrics) if monitoring_metrics else list(_all_metrics),
+            "refresh_interval": max(5, int(monitoring_refresh_interval)),
+        }
+
         return {
             "_integration_type": "admin",
             "enabled": True,
@@ -863,6 +976,10 @@ class Integration:
             "audit_max_entries": audit_max_entries,
             "list_per_page": list_per_page,
             "theme": theme,
+            "modules": modules,
+            "audit_config": audit_config,
+            "monitoring_config": monitoring_config,
+            "sidebar_sections": resolved_sidebar,
             **kwargs,
         }
 

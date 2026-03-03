@@ -95,6 +95,8 @@ class AdminAuditLog:
         self._entries: List[AdminAuditEntry] = []
         self._max_entries = max_entries
         self._counter = 0
+        # Admin config reference — set by AdminSite after config is parsed
+        self._admin_config: Any = None
 
     def log(
         self,
@@ -115,8 +117,35 @@ class AdminAuditLog:
         """
         Record an admin action.
 
+        Respects the admin config's excluded actions, audit category
+        switches (log_logins, log_views, log_searches), and the global
+        audit enabled flag.  If the action is excluded, returns a
+        sentinel entry but does **not** persist it.
+
         Returns the created audit entry.
         """
+        # ── Check admin config filters ──
+        if self._admin_config is not None:
+            if not self._admin_config.is_action_allowed(action):
+                # Return a stub entry without persisting
+                import secrets
+                return AdminAuditEntry(
+                    id=f"audit_skip_{secrets.token_hex(4)}",
+                    timestamp=datetime.now(timezone.utc),
+                    user_id=user_id,
+                    username=username,
+                    role=role,
+                    action=action,
+                    model_name=model_name,
+                    record_pk=record_pk,
+                    changes=changes,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    metadata=metadata or {},
+                    success=success,
+                    error_message=error_message,
+                )
+
         import secrets
 
         self._counter += 1
@@ -220,6 +249,18 @@ class ModelBackedAuditLog:
     def __init__(self, fallback_max: int = 2_000):
         self._fallback = AdminAuditLog(max_entries=fallback_max)
         self._db_available: Optional[bool] = None  # None = not yet probed
+        # Admin config reference — set by AdminSite after config is parsed
+        self._admin_config: Any = None
+
+    @property
+    def admin_config(self):
+        return self._admin_config
+
+    @admin_config.setter
+    def admin_config(self, value):
+        self._admin_config = value
+        # Propagate to fallback
+        self._fallback._admin_config = value
 
     # ── Internal helpers ─────────────────────────────────────────────
 
@@ -261,12 +302,14 @@ class ModelBackedAuditLog:
         """
         Record an audit entry.
 
-        Schedules an async DB write. Always also writes to the in-memory
-        fallback so synchronous callers and tests see the entry immediately.
+        Respects admin config action filtering. Schedules an async DB write.
+        Always also writes to the in-memory fallback so synchronous callers
+        and tests see the entry immediately.
         """
         import asyncio
 
         # Always record in-memory fallback (instant, sync)
+        # The fallback's _admin_config check will handle filtering
         mem_entry = self._fallback.log(
             user_id=user_id,
             username=username,
@@ -281,6 +324,10 @@ class ModelBackedAuditLog:
             success=success,
             error_message=error_message,
         )
+
+        # If the action was filtered out (skip entry), don't write to DB
+        if mem_entry.id.startswith("audit_skip_"):
+            return mem_entry
 
         # Fire-and-forget async DB write
         action_str = action.value if hasattr(action, "value") else str(action)
@@ -330,6 +377,7 @@ class ModelBackedAuditLog:
     ) -> "AdminAuditEntry":
         """
         Async version of log() — awaits the DB write directly.
+        Respects admin config action filtering.
         Use this when you are already inside an async context and want
         to guarantee the entry is persisted before continuing.
         """
@@ -340,6 +388,9 @@ class ModelBackedAuditLog:
             action=action,
             **kwargs,
         )
+        # If the action was filtered out, don't write to DB
+        if mem_entry.id.startswith("audit_skip_"):
+            return mem_entry
         action_str = action.value if hasattr(action, "value") else str(action)
         await self._async_write(
             user_id=user_id,
