@@ -30,6 +30,10 @@ from .utils.colors import (
     file_written, file_skipped, tree_item, badge, indent_echo, accent,
     _CHECK, _CROSS, _ARROW, _BULLET,
 )
+from .utils.prompts import (
+    flow_header, flow_done, ask, ask_password,
+    select, multi_select, confirm, recap,
+)
 
 import re as _re
 
@@ -240,27 +244,130 @@ def init():
 
 
 @init.command('workspace')
-@click.argument('name')
+@click.argument('name', required=False, default=None)
 @click.option('--minimal', is_flag=True, help='Minimal setup (no examples)')
 @click.option('--template', type=str, help='Use template (api, service, monolith)')
+@click.option('--yes', '-y', is_flag=True, help='Skip interactive prompts and use defaults')
 @click.pass_context
-def init_workspace(ctx, name: str, minimal: bool, template: Optional[str]):
+def init_workspace(ctx, name: Optional[str], minimal: bool, template: Optional[str], yes: bool):
     """
     Create a new Aquilia workspace.
     
+    When run without arguments, starts an interactive setup wizard with
+    Vite-style prompts. Pass --yes to skip prompts and use defaults.
+
     Examples:
-      aq init workspace my-api
-      aq init workspace my-api --minimal
-      aq init workspace my-api --template=api
+      aq init workspace                    # Interactive mode
+      aq init workspace my-api             # Interactive with name pre-filled
+      aq init workspace my-api --minimal   # Non-interactive minimal
+      aq init workspace my-api -y          # Non-interactive with defaults
     """
     from .commands.init import create_workspace
-    
+
+    interactive = not yes and sys.stdin.isatty()
+
+    # ── Interactive flow ─────────────────────────────────────────────
+    if interactive:
+        flow_header(
+            "create-aquilia",
+            "Scaffold an Aquilia workspace in seconds.",
+        )
+
+        # 1. Project name
+        if not name:
+            name = ask("Project name", default="my-api", required=True,
+                        validator=_validate_name)
+        else:
+            click.echo(f"  {click.style('◆', fg='cyan')} {click.style('Project name', fg='white', bold=True)} {click.style('…', dim=True)} {click.style(name, fg='cyan')}")
+
+        # 2. Template
+        if not template:
+            template_choice = select("Template", [
+                ("none",      "Blank workspace — start from scratch"),
+                ("api",       "REST API — routes, JSON responses, CORS"),
+                ("service",   "Microservice — lightweight, single-purpose"),
+                ("monolith",  "Monolith — full-featured, batteries included"),
+            ], default=0)
+            template = None if template_choice == "none" else template_choice
+
+        # 3. Minimal mode
+        if not minimal:
+            minimal = not confirm("Include full project structure?", default=True)
+
+        # 4. Features to include
+        if not minimal:
+            features = multi_select("Include", [
+                ("Dockerfile",       "Container deployment",              True),
+                ("docker-compose",   "Multi-container orchestration",     True),
+                ("Makefile",         "Build automation targets",          True),
+                ("README",           "Project documentation",            True),
+                (".gitignore",       "Git ignore rules",                 True),
+                ("tests",            "Test directory with conftest",     True),
+            ])
+
+            include_docker    = "Dockerfile" in features or "docker-compose" in features
+            include_makefile  = "Makefile" in features
+            include_readme    = "README" in features
+            include_gitignore = ".gitignore" in features
+            include_tests     = "tests" in features
+        else:
+            include_docker = False
+            include_makefile = False
+            include_readme = False
+            include_gitignore = True
+            include_tests = True
+
+        # 5. License
+        license_choice = select("License", [
+            ("none",       "No license file"),
+            ("MIT",        "MIT License"),
+            ("Apache-2.0", "Apache License 2.0"),
+            ("BSD-3",      "BSD 3-Clause License"),
+        ], default=0)
+        include_license = None if license_choice == "none" else license_choice
+
+        # 6. Confirmation
+        recap([
+            ("Name",      name),
+            ("Template",  template or "none"),
+            ("Mode",      "minimal" if minimal else "full"),
+            ("Docker",    "yes" if include_docker else "no"),
+            ("Makefile",  "yes" if include_makefile else "no"),
+            ("README",    "yes" if include_readme else "no"),
+            ("Tests",     "yes" if include_tests else "no"),
+            ("License",   include_license or "none"),
+        ], title="Configuration")
+
+        if not confirm("Scaffold project?", default=True):
+            click.echo()
+            info("  Cancelled.")
+            return
+
+    else:
+        # Non-interactive defaults
+        if not name:
+            error(f"  {_CROSS} Project name is required in non-interactive mode")
+            sys.exit(1)
+        include_docker = not minimal
+        include_makefile = not minimal
+        include_readme = not minimal
+        include_gitignore = True
+        include_tests = True
+        include_license = None
+
+    # ── Generate ─────────────────────────────────────────────────────
     try:
         workspace_path = create_workspace(
             name=name,
             minimal=minimal,
             template=template,
             verbose=ctx.obj['verbose'],
+            include_docker=include_docker,
+            include_readme=include_readme,
+            include_makefile=include_makefile,
+            include_tests=include_tests,
+            include_gitignore=include_gitignore,
+            include_license=include_license,
         )
         
         if not ctx.obj['quiet']:
@@ -288,15 +395,21 @@ def init_workspace(ctx, name: str, minimal: bool, template: Optional[str]):
                 tree_item("base.yaml", depth=1, last=True)
             tree_item(".env.example", depth=0)
             tree_item(".editorconfig", depth=0)
-            tree_item(".gitignore", depth=0)
+            if include_gitignore:
+                tree_item(".gitignore", depth=0)
             tree_item("requirements.txt", depth=0)
-            tree_item("tests/", depth=0)
-            tree_item("conftest.py", depth=1)
-            tree_item("test_smoke.py", depth=1, last=True)
+            if include_tests:
+                tree_item("tests/", depth=0)
+                tree_item("conftest.py", depth=1)
+                tree_item("test_smoke.py", depth=1, last=True)
             if not minimal:
-                tree_item("Makefile", depth=0)
-                tree_item("Dockerfile", depth=0)
-                tree_item("docker-compose.yml", depth=0, last=True)
+                if include_makefile:
+                    tree_item("Makefile", depth=0)
+                if include_docker:
+                    tree_item("Dockerfile", depth=0)
+                    tree_item("docker-compose.yml", depth=0)
+            if include_license:
+                tree_item("LICENSE", depth=0, last=True)
             click.echo()
 
             next_steps([
@@ -304,12 +417,24 @@ def init_workspace(ctx, name: str, minimal: bool, template: Optional[str]):
                 "cp .env.example .env",
                 "pip install -r requirements.txt",
                 "aq add module <module_name>",
-                "make run",
+                "make run" if include_makefile else "aq run",
             ])
     
     except Exception as e:
         error(f"  {_CROSS} Failed to create workspace: {e}")
         sys.exit(1)
+
+
+def _validate_name(value: str) -> Optional[str]:
+    """Validate a workspace/module name."""
+    import re as _vre
+    if not value or len(value.strip()) < 2:
+        return "Name must be at least 2 characters"
+    if not _vre.match(r'^[a-zA-Z][a-zA-Z0-9_-]*$', value):
+        return "Name must start with a letter and contain only letters, digits, hyphens, underscores"
+    if len(value) > 64:
+        return "Name must be 64 characters or fewer"
+    return None
 
 
 @cli.group(cls=AquiliaGroup)
@@ -319,31 +444,114 @@ def add():
 
 
 @add.command('module')
-@click.argument('name')
+@click.argument('name', required=False, default=None)
 @click.option('--depends-on', multiple=True, help='Module dependencies')
 @click.option('--fault-domain', type=str, help='Custom fault domain')
 @click.option('--route-prefix', type=str, help='Route prefix (default: /name)')
 @click.option('--with-tests', is_flag=True, help='Generate test routes')
 @click.option('--minimal', is_flag=True, help='Generate minimal module (controller + manifest only)')
 @click.option('--no-docker', is_flag=True, help='Skip auto-generating Docker files')
+@click.option('--yes', '-y', is_flag=True, help='Skip interactive prompts and use defaults')
 @click.pass_context
-def add_module(ctx, name: str, depends_on: tuple, fault_domain: Optional[str], route_prefix: Optional[str], with_tests: bool, minimal: bool, no_docker: bool):
+def add_module(ctx, name: Optional[str], depends_on: tuple, fault_domain: Optional[str], route_prefix: Optional[str], with_tests: bool, minimal: bool, no_docker: bool, yes: bool):
     """
     Add a new module to the workspace.
     
+    When run without arguments, starts an interactive setup wizard.
+    Pass --yes to skip prompts and use defaults.
+
     By default also generates Dockerfile and docker-compose.yml if they
     don't exist yet.  Use --no-docker to skip.
     
     Examples:
-      aq add module users
-      aq add module users --minimal
+      aq add module                        # Interactive mode
+      aq add module users                  # Interactive with name pre-filled
+      aq add module users -y               # Non-interactive with defaults
       aq add module products --depends-on=users
       aq add module admin --fault-domain=ADMIN --route-prefix=/api/admin
-      aq add module test --with-tests
-      aq add module api --no-docker
     """
     from .commands.add import add_module as _add_module
-    
+
+    interactive = not yes and sys.stdin.isatty()
+
+    # ── Interactive flow ─────────────────────────────────────────────
+    if interactive:
+        flow_header(
+            "add module",
+            "Add a new module to this workspace.",
+        )
+
+        # 1. Module name
+        if not name:
+            name = ask("Module name", required=True, validator=_validate_name,
+                        hint="e.g. users, products, auth")
+        else:
+            click.echo(f"  {click.style('◆', fg='cyan')} {click.style('Module name', fg='white', bold=True)} {click.style('…', dim=True)} {click.style(name, fg='cyan')}")
+
+        # 2. Route prefix
+        if not route_prefix:
+            default_prefix = f"/{name}"
+            route_prefix = ask("Route prefix", default=default_prefix)
+
+        # 3. Module type
+        if not minimal:
+            module_type = select("Module type", [
+                ("full",    "Full module — controllers, services, faults, models"),
+                ("minimal", "Minimal — controller + manifest only"),
+            ], default=0)
+            minimal = module_type == "minimal"
+
+        # 4. Fault domain
+        if not fault_domain and not minimal:
+            fault_domain = ask("Fault domain", default=name.upper(),
+                               hint="Used for error classification")
+
+        # 5. Features
+        if not minimal:
+            module_features = multi_select("Include", [
+                ("tests",          "Test routes file",               False),
+                ("docker",         "Auto-generate Docker files",     True),
+            ])
+            with_tests = "tests" in module_features
+            no_docker = "docker" not in module_features
+
+        # 6. Dependencies — discover existing modules
+        if not depends_on:
+            workspace_root = Path.cwd()
+            modules_dir = workspace_root / 'modules'
+            existing_mods = []
+            if modules_dir.exists():
+                existing_mods = [
+                    d.name for d in sorted(modules_dir.iterdir())
+                    if d.is_dir() and (d / 'manifest.py').exists()
+                    and d.name != name
+                ]
+            if existing_mods:
+                dep_choices = [(m, "", False) for m in existing_mods]
+                depends_on = tuple(multi_select("Dependencies", dep_choices))
+
+        # 7. Confirmation
+        recap([
+            ("Module",       name),
+            ("Route prefix", route_prefix or f"/{name}"),
+            ("Type",         "minimal" if minimal else "full"),
+            ("Fault domain", fault_domain or name.upper()),
+            ("Tests",        "yes" if with_tests else "no"),
+            ("Docker",       "skip" if no_docker else "auto"),
+            ("Dependencies", ", ".join(depends_on) if depends_on else "none"),
+        ], title="Module Configuration")
+
+        if not confirm("Add module?", default=True):
+            click.echo()
+            info("  Cancelled.")
+            return
+
+    else:
+        if not name:
+            error(f"  {_CROSS} Module name is required in non-interactive mode")
+            sys.exit(1)
+
+    # ── Generate ─────────────────────────────────────────────────────
     try:
         module_path = _add_module(
             name=name,
@@ -1955,9 +2163,11 @@ def admin_check(ctx, fix: bool, as_json: bool):
 @click.option('--username', prompt=click.style('  Username', fg='cyan', bold=True), help='Admin username')
 @click.option('--email', prompt=click.style('  Email', fg='cyan', bold=True), help='Admin email (required)')
 @click.option('--password', prompt=click.style('  Password', fg='cyan', bold=True), hide_input=True, confirmation_prompt=click.style('  Confirm password', fg='cyan', bold=True), help='Admin password')
+@click.option('--first-name', default=None, help='First name (optional)')
+@click.option('--last-name', default=None, help='Last name (optional)')
 @click.option('--no-input', is_flag=True, hidden=True, help='Non-interactive mode (requires all options)')
 @click.pass_context
-def admin_createsuperuser(ctx, username: str, email: str, password: str, no_input: bool):
+def admin_createsuperuser(ctx, username: str, email: str, password: str, first_name: Optional[str], last_name: Optional[str], no_input: bool):
     """
     Create an admin superuser in the database.
 
@@ -1970,6 +2180,7 @@ def admin_createsuperuser(ctx, username: str, email: str, password: str, no_inpu
     Examples:
       aq admin createsuperuser
       aq admin createsuperuser --username=admin --email=admin@site.com --password=secret
+      aq admin createsuperuser --first-name=John --last-name=Doe
     """
     import asyncio
     import time as _ctime
@@ -1994,10 +2205,60 @@ def admin_createsuperuser(ctx, username: str, email: str, password: str, no_inpu
         error(f"  {_CROSS} Password must be at least 4 characters")
         sys.exit(1)
 
+    # ── Optional profile fields (interactive) ────────────────────────
+    interactive = sys.stdin.isatty() and not no_input
+    extra_fields = {}
+
+    if interactive:
+        section("Profile (optional — press Enter to skip)")
+        if first_name is None:
+            first_name = click.prompt(
+                click.style('  First name', fg='cyan'), default='', show_default=False
+            ).strip() or None
+        if last_name is None:
+            last_name = click.prompt(
+                click.style('  Last name', fg='cyan'), default='', show_default=False
+            ).strip() or None
+        phone = click.prompt(
+            click.style('  Phone', fg='cyan'), default='', show_default=False
+        ).strip() or None
+        bio = click.prompt(
+            click.style('  Bio', fg='cyan'), default='', show_default=False
+        ).strip() or None
+        timezone = click.prompt(
+            click.style('  Timezone', fg='cyan'), default='UTC', show_default=False
+        ).strip() or 'UTC'
+        locale = click.prompt(
+            click.style('  Locale', fg='cyan'), default='en', show_default=False
+        ).strip() or 'en'
+        click.echo()
+
+        if phone:
+            extra_fields['phone'] = phone
+        if bio:
+            extra_fields['bio'] = bio
+        if timezone and timezone != 'UTC':
+            extra_fields['timezone'] = timezone
+        if locale and locale != 'en':
+            extra_fields['locale'] = locale
+    else:
+        phone = bio = timezone = locale = None
+
+    if first_name:
+        extra_fields['first_name'] = first_name
+    if last_name:
+        extra_fields['last_name'] = last_name
+
     section("Credentials")
     kv("Username", username)
     kv("Email", email)
     kv("Password", click.style("*" * len(password), dim=True))
+    if first_name:
+        kv("First Name", first_name)
+    if last_name:
+        kv("Last Name", last_name)
+    if phone:
+        kv("Phone", phone)
     click.echo()
 
     # ── Create superuser ─────────────────────────────────────────────
@@ -2059,6 +2320,7 @@ def admin_createsuperuser(ctx, username: str, email: str, password: str, no_inpu
                     username=username,
                     password=password,
                     email=email,
+                    **extra_fields,
                 )
                 return True, str(getattr(user, 'pk', '?'))
             except Exception as e:
@@ -2109,6 +2371,10 @@ def admin_createsuperuser(ctx, username: str, email: str, password: str, no_inpu
         section("Account Details")
         kv("Username", username)
         kv("Email", email)
+        if first_name:
+            kv("First Name", first_name)
+        if last_name:
+            kv("Last Name", last_name)
         kv("Role", click.style("superadmin", fg="magenta", bold=True))
         kv("Storage", "Database (admin_users table)")
         kv("Password", "Hashed (Argon2id/PBKDF2)")
@@ -2129,6 +2395,232 @@ def admin_createsuperuser(ctx, username: str, email: str, password: str, no_inpu
             "aq run",
             f"Visit http://localhost:8000/admin/",
             f"Log in with username '{username}' and your password",
+        ])
+
+
+@admin.command('createstaff')
+@click.option('--username', prompt=click.style('  Username', fg='cyan', bold=True), help='Staff username')
+@click.option('--email', prompt=click.style('  Email', fg='cyan', bold=True), help='Staff email (required)')
+@click.option('--password', prompt=click.style('  Password', fg='cyan', bold=True), hide_input=True, confirmation_prompt=click.style('  Confirm password', fg='cyan', bold=True), help='Staff password')
+@click.option('--first-name', default=None, help='First name (optional)')
+@click.option('--last-name', default=None, help='Last name (optional)')
+@click.option('--no-input', is_flag=True, hidden=True, help='Non-interactive mode (requires all options)')
+@click.pass_context
+def admin_createstaff(ctx, username: str, email: str, password: str, first_name: Optional[str], last_name: Optional[str], no_input: bool):
+    """
+    Create an admin staff user in the database.
+
+    Staff users have limited dashboard access compared to superusers.
+    They cannot manage other admin users or modify permissions unless
+    explicitly granted.
+
+    Requires ``aq db migrate`` to have been run first.
+
+    Examples:
+      aq admin createstaff
+      aq admin createstaff --username=editor --email=editor@site.com --password=secret
+      aq admin createstaff --first-name=Jane --last-name=Smith
+    """
+    import asyncio
+    import time as _ctime
+
+    # ── Validate inputs ──────────────────────────────────────────────
+    click.echo()
+    banner("Aquilia", subtitle="Admin Staff User Setup")
+    click.echo()
+
+    if not username or len(username.strip()) < 2:
+        error(f"  {_CROSS} Username must be at least 2 characters")
+        sys.exit(1)
+
+    if not email or "@" not in email or "." not in email.split("@")[-1]:
+        error(f"  {_CROSS} A valid email address is required")
+        sys.exit(1)
+
+    if len(password) < 4:
+        error(f"  {_CROSS} Password must be at least 4 characters")
+        sys.exit(1)
+
+    # ── Optional profile fields (interactive) ────────────────────────
+    interactive = sys.stdin.isatty() and not no_input
+    extra_fields = {}
+
+    if interactive:
+        section("Profile (optional — press Enter to skip)")
+        if first_name is None:
+            first_name = click.prompt(
+                click.style('  First name', fg='cyan'), default='', show_default=False
+            ).strip() or None
+        if last_name is None:
+            last_name = click.prompt(
+                click.style('  Last name', fg='cyan'), default='', show_default=False
+            ).strip() or None
+        phone = click.prompt(
+            click.style('  Phone', fg='cyan'), default='', show_default=False
+        ).strip() or None
+        bio = click.prompt(
+            click.style('  Bio', fg='cyan'), default='', show_default=False
+        ).strip() or None
+        timezone = click.prompt(
+            click.style('  Timezone', fg='cyan'), default='UTC', show_default=False
+        ).strip() or 'UTC'
+        locale = click.prompt(
+            click.style('  Locale', fg='cyan'), default='en', show_default=False
+        ).strip() or 'en'
+        click.echo()
+
+        if phone:
+            extra_fields['phone'] = phone
+        if bio:
+            extra_fields['bio'] = bio
+        if timezone and timezone != 'UTC':
+            extra_fields['timezone'] = timezone
+        if locale and locale != 'en':
+            extra_fields['locale'] = locale
+    else:
+        phone = bio = timezone = locale = None
+
+    if first_name:
+        extra_fields['first_name'] = first_name
+    if last_name:
+        extra_fields['last_name'] = last_name
+
+    section("Credentials")
+    kv("Username", username)
+    kv("Email", email)
+    kv("Password", click.style("*" * len(password), dim=True))
+    if first_name:
+        kv("First Name", first_name)
+    if last_name:
+        kv("Last Name", last_name)
+    if phone:
+        kv("Phone", phone)
+    click.echo()
+
+    # ── Create staff user ────────────────────────────────────────────
+    step(1, "Connecting to database...")
+
+    async def _create():
+        database_url = _detect_workspace_db_url()
+        try:
+            from aquilia.db.engine import configure_database
+            db = configure_database(database_url)
+            await db.connect()
+        except Exception:
+            db = None
+
+        try:
+            from aquilia.admin.models import (
+                AdminUser,
+                ContentType,
+                AdminPermission,
+                AdminGroup,
+                AdminLogEntry,
+                AdminSession,
+            )
+
+            if db is None:
+                raise RuntimeError(
+                    "No database connection available. "
+                    "Run 'aq db migrate' first to set up the database."
+                )
+
+            _admin_models = [
+                ContentType,
+                AdminPermission,
+                AdminGroup,
+                AdminUser,
+                AdminLogEntry,
+                AdminSession,
+            ]
+            for _model in _admin_models:
+                try:
+                    create_sql = _model.generate_create_table_sql()
+                    await db.execute(create_sql)
+                    for idx_sql in _model.generate_index_sql():
+                        await db.execute(idx_sql)
+                    for m2m_sql in _model.generate_m2m_sql():
+                        await db.execute(m2m_sql)
+                except Exception:
+                    pass
+
+            try:
+                user = await AdminUser.create_staff_user(
+                    username=username,
+                    password=password,
+                    email=email,
+                    **extra_fields,
+                )
+                return True, str(getattr(user, 'pk', '?'))
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to create staff user: {e}\n"
+                    "Ensure 'aq db makemigrations' and 'aq db migrate' have been run first."
+                ) from e
+        finally:
+            if db is not None:
+                try:
+                    await db.disconnect()
+                except Exception:
+                    pass
+
+    t0 = _ctime.monotonic()
+    try:
+        ok, pk_info = asyncio.run(_create())
+    except Exception as e:
+        click.echo()
+        error(f"  {_CROSS} {e}")
+        click.echo()
+        panel(
+            [
+                "Troubleshooting:",
+                "",
+                "1. Ensure the database is running",
+                "2. Run: aq db makemigrations",
+                "3. Run: aq db migrate",
+                "4. Then retry: aq admin createstaff",
+            ],
+            title="Help",
+            fg="red",
+        )
+        sys.exit(1)
+
+    elapsed = (_ctime.monotonic() - t0) * 1000
+
+    if not ctx.obj.get('quiet'):
+        step(2, "Hashing password with Argon2id/PBKDF2...")
+        step(3, "Writing to admin_users table...")
+        click.echo()
+
+        success(f"  {_CHECK} Staff user created successfully!")
+        click.echo()
+
+        section("Account Details")
+        kv("Username", username)
+        kv("Email", email)
+        if first_name:
+            kv("First Name", first_name)
+        if last_name:
+            kv("Last Name", last_name)
+        kv("Role", click.style("staff", fg="yellow", bold=True))
+        kv("Storage", "Database (admin_users table)")
+        kv("Password", "Hashed (Argon2id/PBKDF2)")
+        kv("Created in", f"{elapsed:.0f}ms")
+        click.echo()
+
+        section("Permissions")
+        bullet("Admin dashboard access (limited)", fg="yellow")
+        bullet("View and edit assigned models", fg="yellow")
+        bullet("Cannot manage admin users", fg="yellow")
+        bullet("Cannot modify system permissions", fg="yellow")
+        click.echo()
+
+        next_steps([
+            "aq admin check",
+            "aq run",
+            f"Visit http://localhost:8000/admin/",
+            f"Log in with username '{username}' and your password",
+            "Grant additional permissions via superuser account",
         ])
 
 

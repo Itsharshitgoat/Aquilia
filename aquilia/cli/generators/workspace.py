@@ -14,11 +14,24 @@ class WorkspaceGenerator:
         path: Path,
         minimal: bool = False,
         template: Optional[str] = None,
+        *,
+        include_docker: bool = True,
+        include_readme: bool = True,
+        include_makefile: bool = True,
+        include_tests: bool = True,
+        include_gitignore: bool = True,
+        include_license: Optional[str] = None,
     ):
         self.name = name
         self.path = path
         self.minimal = minimal
         self.template = template
+        self.include_docker = include_docker
+        self.include_readme = include_readme
+        self.include_makefile = include_makefile
+        self.include_tests = include_tests
+        self.include_gitignore = include_gitignore
+        self.include_license = include_license
     
     def generate(self) -> None:
         """Generate workspace structure."""
@@ -34,27 +47,31 @@ class WorkspaceGenerator:
         # Create starter page
         self._create_starter_page()
         
-        # Create default scaffold files
-        self._create_models_dir()
-        
         # Template files (--template flag or full mode)
         if self.template:
             self._create_template_files()
         
         # Create additional files (industry-standard project structure)
-        self._create_gitignore()
+        if self.include_gitignore:
+            self._create_gitignore()
         self._create_env_example()
         self._create_editorconfig()
         self._create_requirements()
-        self._create_tests_dir()
+        if self.include_tests:
+            self._create_tests_dir()
         if not self.minimal:
-            self._create_readme()
-            self._create_makefile()
-            self._create_deployment_files()
+            if self.include_readme:
+                self._create_readme()
+            if self.include_makefile:
+                self._create_makefile()
+            if self.include_docker:
+                self._create_deployment_files()
+        if self.include_license:
+            self._create_license_file()
     
     def _create_directories(self) -> None:
         """Create workspace directories."""
-        dirs = ['modules', 'config', 'models']
+        dirs = ['modules', 'config']
         
         if not self.minimal:
             dirs.extend(['artifacts'])
@@ -1395,6 +1412,88 @@ class WorkspaceGenerator:
         """).strip()
 
         (self.path / 'README.md').write_text(content)
+
+    def _create_license_file(self) -> None:
+        """Create a LICENSE file based on the selected license type."""
+        import datetime
+        year = datetime.datetime.now().year
+
+        if self.include_license == 'MIT':
+            content = textwrap.dedent(f"""\
+                MIT License
+
+                Copyright (c) {year} {self.name}
+
+                Permission is hereby granted, free of charge, to any person obtaining a copy
+                of this software and associated documentation files (the "Software"), to deal
+                in the Software without restriction, including without limitation the rights
+                to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+                copies of the Software, and to permit persons to whom the Software is
+                furnished to do so, subject to the following conditions:
+
+                The above copyright notice and this permission notice shall be included in all
+                copies or substantial portions of the Software.
+
+                THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+                IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+                FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+                AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+                LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+                OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+                SOFTWARE.
+            """)
+        elif self.include_license == 'Apache-2.0':
+            content = textwrap.dedent(f"""\
+                Copyright {year} {self.name}
+
+                Licensed under the Apache License, Version 2.0 (the "License");
+                you may not use this file except in compliance with the License.
+                You may obtain a copy of the License at
+
+                    http://www.apache.org/licenses/LICENSE-2.0
+
+                Unless required by applicable law or agreed to in writing, software
+                distributed under the License is distributed on an "AS IS" BASIS,
+                WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+                See the License for the specific language governing permissions and
+                limitations under the License.
+            """)
+        elif self.include_license == 'BSD-3':
+            content = textwrap.dedent(f"""\
+                BSD 3-Clause License
+
+                Copyright (c) {year}, {self.name}
+                All rights reserved.
+
+                Redistribution and use in source and binary forms, with or without
+                modification, are permitted provided that the following conditions are met:
+
+                1. Redistributions of source code must retain the above copyright notice, this
+                   list of conditions and the following disclaimer.
+
+                2. Redistributions in binary form must reproduce the above copyright notice,
+                   this list of conditions and the following disclaimer in the documentation
+                   and/or other materials provided with the distribution.
+
+                3. Neither the name of the copyright holder nor the names of its
+                   contributors may be used to endorse or promote products derived from
+                   this software without specific prior written permission.
+
+                THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+                AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+                IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+                DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+                FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+                DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+                SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+                CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+                OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+                OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+            """)
+        else:
+            return  # Unknown license — skip
+
+        (self.path / 'LICENSE').write_text(content)
 
     def _create_deployment_files(self) -> None:
         """Create default Docker and docker-compose files for the workspace.
