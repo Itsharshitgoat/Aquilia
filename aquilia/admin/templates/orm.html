@@ -95,9 +95,29 @@
 {# ═══════════════════════════════════════════════════════════════════ #}
 <div class="tab-content" data-tab-content="orm" data-tab="graph">
     <div class="section-label">Model Relations</div>
-    <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:12px;display:flex;align-items:center;gap:8px;">
-        <i class="icon-info" style="font-size:14px;color:var(--info);"></i>
-        Drag nodes to rearrange. Hover edges for details. FK = Foreign Key, O2O = One-to-One, M2M = Many-to-Many.
+    {# ── Graph Stats Strip ── #}
+    <div class="graph-stats-strip">
+        <span class="graph-stat-chip">
+            <span class="graph-stat-dot" style="background:var(--accent);"></span>
+            <strong>{{ all_relations|selectattr('type','equalto','FK')|list|length }}</strong> FK
+        </span>
+        <span class="graph-stat-chip">
+            <span class="graph-stat-dot" style="background:var(--info);"></span>
+            <strong>{{ all_relations|selectattr('type','equalto','O2O')|list|length }}</strong> O2O
+        </span>
+        <span class="graph-stat-chip">
+            <span class="graph-stat-dot" style="background:var(--warning);"></span>
+            <strong>{{ all_relations|selectattr('type','equalto','M2M')|list|length }}</strong> M2M
+        </span>
+        <span class="graph-stat-chip">
+            <i class="icon-share-2" style="font-size:11px;color:var(--text-faint);"></i>
+            <strong>{{ model_schema|length }}</strong> nodes
+        </span>
+    </div>
+    {# ── Graph Node Search ── #}
+    <div class="graph-search-bar">
+        <i class="icon-search" style="font-size:13px;color:var(--text-faint);"></i>
+        <input type="text" id="graphSearchInput" placeholder="Search nodes…" autocomplete="off">
     </div>
     {# Legend #}
     <div style="display:flex;gap:18px;margin-bottom:16px;flex-wrap:wrap;">
@@ -111,8 +131,22 @@
             <span style="width:24px;height:3px;background:var(--warning);border-radius:2px;display:inline-block;border-style:dashed;border-width:0 0 3px 0;"></span> M2M (Many-to-Many)
         </span>
     </div>
-    <div class="glass-card" id="graphContainer" style="padding:0;overflow:hidden;position:relative;min-height:450px;cursor:grab;">
-        <svg id="relationGraph" width="100%" height="450" style="display:block;"></svg>
+    <div class="glass-card" id="graphContainer" style="padding:0;overflow:hidden;position:relative;min-height:500px;cursor:grab;">
+        {# ── Graph Controls Toolbar ── #}
+        <div class="graph-controls">
+            <button class="graph-ctrl-btn" id="graphZoomIn" title="Zoom in"><i class="icon-plus" style="font-size:14px;"></i></button>
+            <button class="graph-ctrl-btn" id="graphZoomOut" title="Zoom out"><i class="icon-minus" style="font-size:14px;"></i></button>
+            <button class="graph-ctrl-btn" id="graphFitView" title="Fit to view"><i class="icon-maximize-2" style="font-size:14px;"></i></button>
+            <button class="graph-ctrl-btn" id="graphReset" title="Reset layout"><i class="icon-rotate-ccw" style="font-size:14px;"></i></button>
+            <button class="graph-ctrl-btn" id="graphFullscreen" title="Toggle fullscreen"><i class="icon-maximize" style="font-size:14px;"></i></button>
+        </div>
+        <svg id="relationGraph" width="100%" height="500" style="display:block;"></svg>
+        {# ── Minimap ── #}
+        <div class="graph-minimap" id="graphMinimap">
+            <svg id="minimapSvg" width="100%" height="100%"></svg>
+        </div>
+        {# ── Tooltip ── #}
+        <div class="graph-tooltip" id="graphTooltip"></div>
     </div>
     {% if not all_relations %}
     <div style="text-align:center;padding:32px 0;color:var(--text-faint);font-size:0.85rem;">
@@ -390,7 +424,7 @@
     });
 })();
 
-// ── Relation Graph (force-directed, SVG, drag) ─────────────────────
+// ── Relation Graph (force-directed, SVG, zoom/pan/drag/Bézier/minimap) ──
 var _graphInitialized = false;
 function initGraph() {
     if (_graphInitialized) return;
@@ -402,18 +436,23 @@ function initGraph() {
     if (!svg || !schema.length) return;
 
     var container = document.getElementById('graphContainer');
-    var W = container.clientWidth || 800;
-    var H = Math.max(450, schema.length * 50);
+    var W = container.clientWidth || 900;
+    var H = Math.max(500, schema.length * 55);
     svg.setAttribute('height', H);
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+    // ── State ──
+    var zoom = 1, panX = 0, panY = 0;
+    var selectedNode = null, hoveredNode = null;
 
     // Build nodes
     var nodeMap = {};
     var nodes = [];
     schema.forEach(function(m, i) {
         var angle = (2 * Math.PI * i) / schema.length;
-        var cx = W / 2 + (W * 0.32) * Math.cos(angle);
-        var cy = H / 2 + (H * 0.35) * Math.sin(angle);
-        var node = { name: m.name, x: cx, y: cy, vx: 0, vy: 0, fields: m.field_count, rels: m.relations.length };
+        var cx = W / 2 + (W * 0.30) * Math.cos(angle);
+        var cy = H / 2 + (H * 0.32) * Math.sin(angle);
+        var node = { name: m.name, x: cx, y: cy, vx: 0, vy: 0, fields: m.field_count, rels: m.relations.length, fieldList: m.fields || [], relList: m.relations || [] };
         nodes.push(node);
         nodeMap[m.name] = node;
     });
@@ -424,30 +463,32 @@ function initGraph() {
         var from = nodeMap[r['from']];
         var to = nodeMap[r.to];
         if (from && to && from !== to) {
-            edges.push({ from: from, to: to, type: r.type, field: r.field, label: r.type + ': ' + r['from'] + '.' + r.field + ' → ' + r.to });
+            edges.push({ from: from, to: to, type: r.type, field: r.field, onDelete: r.on_delete || '', relatedName: r.related_name || '', label: r.type + ': ' + r['from'] + '.' + r.field + ' → ' + r.to });
         }
     });
 
-    // Colors
+    // Edge colors
     var edgeColors = { FK: 'var(--accent)', O2O: 'var(--info)', M2M: 'var(--warning)' };
+    var edgeHexColors = { FK: '#22c55e', O2O: '#3b82f6', M2M: '#f59e0b' };
 
-    // Force simulation (simple spring + repulsion)
+    // ── Force simulation ──
     function simulate() {
-        var REPULSION = 8000;
-        var SPRING = 0.005;
-        var SPRING_LEN = 180;
-        var DAMPING = 0.85;
+        var REPULSION = 9000;
+        var SPRING = 0.004;
+        var SPRING_LEN = 200;
+        var DAMPING = 0.82;
         var GRAVITY = 0.002;
 
-        for (var iter = 0; iter < 150; iter++) {
+        for (var iter = 0; iter < 180; iter++) {
             for (var i = 0; i < nodes.length; i++) {
                 for (var j = i + 1; j < nodes.length; j++) {
                     var dx = nodes[j].x - nodes[i].x;
                     var dy = nodes[j].y - nodes[i].y;
                     var d2 = dx * dx + dy * dy + 1;
                     var f = REPULSION / d2;
-                    var fx = f * dx / Math.sqrt(d2);
-                    var fy = f * dy / Math.sqrt(d2);
+                    var dist = Math.sqrt(d2);
+                    var fx = f * dx / dist;
+                    var fy = f * dy / dist;
                     nodes[i].vx -= fx; nodes[i].vy -= fy;
                     nodes[j].vx += fx; nodes[j].vy += fy;
                 }
@@ -465,12 +506,10 @@ function initGraph() {
             nodes.forEach(function(n) {
                 n.vx += (W / 2 - n.x) * GRAVITY;
                 n.vy += (H / 2 - n.y) * GRAVITY;
-            });
-            nodes.forEach(function(n) {
                 n.vx *= DAMPING; n.vy *= DAMPING;
                 n.x += n.vx; n.y += n.vy;
-                n.x = Math.max(60, Math.min(W - 60, n.x));
-                n.y = Math.max(40, Math.min(H - 40, n.y));
+                n.x = Math.max(70, Math.min(W - 70, n.x));
+                n.y = Math.max(50, Math.min(H - 50, n.y));
             });
         }
     }
@@ -480,70 +519,340 @@ function initGraph() {
         return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    // Render
+    // ── Bézier curve for edges ──
+    function bezierPath(x1, y1, x2, y2, curveStrength) {
+        var mx = (x1 + x2) / 2;
+        var my = (y1 + y2) / 2;
+        var dx = x2 - x1, dy = y2 - y1;
+        var nx = -dy * curveStrength, ny = dx * curveStrength;
+        var cx = mx + nx, cy = my + ny;
+        return 'M' + x1 + ',' + y1 + ' Q' + cx + ',' + cy + ' ' + x2 + ',' + y2;
+    }
+
+    // ── Check if node is connected to a given node ──
+    function isConnected(nodeA, nodeB) {
+        if (nodeA === nodeB) return true;
+        return edges.some(function(e) {
+            return (e.from === nodeA && e.to === nodeB) || (e.from === nodeB && e.to === nodeA);
+        });
+    }
+
+    // ── Render SVG ──
     function render() {
         var html = '<defs>';
-        html += '<marker id="arrow-fk" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--accent)" opacity="0.7"/></marker>';
-        html += '<marker id="arrow-o2o" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--info)" opacity="0.7"/></marker>';
-        html += '<marker id="arrow-m2m" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--warning)" opacity="0.7"/></marker>';
+        html += '<marker id="arrow-fk" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="' + edgeHexColors.FK + '" opacity="0.8"/></marker>';
+        html += '<marker id="arrow-o2o" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="' + edgeHexColors.O2O + '" opacity="0.8"/></marker>';
+        html += '<marker id="arrow-m2m" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="' + edgeHexColors.M2M + '" opacity="0.8"/></marker>';
+        // Glow filter for highlighted nodes
+        html += '<filter id="nodeGlow"><feGaussianBlur stdDeviation="4" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
+        // Animated particle
+        html += '<circle id="particle" r="3" fill="var(--accent)" opacity="0.8"/>';
         html += '</defs>';
+        html += '<g id="graphWorld" transform="translate(' + panX + ',' + panY + ') scale(' + zoom + ')">';
 
-        // Draw edges
-        edges.forEach(function(e) {
+        // ── Draw edges (Bézier curves) ──
+        var edgeCounts = {};
+        edges.forEach(function(e, idx) {
+            var key = [e.from.name, e.to.name].sort().join('|');
+            edgeCounts[key] = (edgeCounts[key] || 0) + 1;
+        });
+        var edgeCounters = {};
+        edges.forEach(function(e, idx) {
+            var key = [e.from.name, e.to.name].sort().join('|');
+            edgeCounters[key] = (edgeCounters[key] || 0) + 1;
+            var count = edgeCounts[key];
+            var curveIdx = edgeCounters[key];
+            var curveStrength = count > 1 ? 0.08 * (curveIdx - (count + 1) / 2) : 0.04;
+
             var col = edgeColors[e.type] || 'var(--text-faint)';
+            var hexCol = edgeHexColors[e.type] || '#888';
             var marker = 'url(#arrow-' + e.type.toLowerCase() + ')';
-            var dash = e.type === 'M2M' ? 'stroke-dasharray="6 4"' : '';
+            var dash = e.type === 'M2M' ? ' stroke-dasharray="8 5"' : '';
             var dx = e.to.x - e.from.x;
             var dy = e.to.y - e.from.y;
             var d = Math.sqrt(dx * dx + dy * dy) || 1;
-            var ox = dx / d * 54;
-            var oy = dy / d * 54;
-            html += '<line x1="' + (e.from.x + ox) + '" y1="' + (e.from.y + oy) + '" x2="' + (e.to.x - ox) + '" y2="' + (e.to.y - oy) + '" stroke="' + col + '" stroke-width="2" ' + dash + ' marker-end="' + marker + '" opacity="0.55">';
-            html += '<title>' + escapeHtml(e.label) + '</title></line>';
-            var mx = (e.from.x + e.to.x) / 2;
-            var my = (e.from.y + e.to.y) / 2 - 6;
-            html += '<text x="' + mx + '" y="' + my + '" text-anchor="middle" fill="' + col + '" font-size="9" font-family="var(--font-mono)" opacity="0.7">' + escapeHtml(e.type) + '</text>';
+            var r = 48;
+            var ox = dx / d * r, oy = dy / d * r;
+            var x1 = e.from.x + ox, y1 = e.from.y + oy;
+            var x2 = e.to.x - ox, y2 = e.to.y - oy;
+            var pathD = bezierPath(x1, y1, x2, y2, curveStrength);
+
+            var dimClass = hoveredNode && !isConnected(hoveredNode, e.from) && !isConnected(hoveredNode, e.to) ? ' dimmed' : '';
+            html += '<path d="' + pathD + '" fill="none" stroke="' + col + '" stroke-width="2"' + dash + ' marker-end="' + marker + '" opacity="0.55" class="graph-edge' + dimClass + '" data-edge-idx="' + idx + '"/>';
+
+            // Animated particle along the edge
+            html += '<circle r="2.5" fill="' + hexCol + '" opacity="0"><animateMotion dur="' + (2 + Math.random()) + 's" repeatCount="indefinite" path="' + pathD + '"/><animate attributeName="opacity" values="0;0.7;0" dur="' + (2 + Math.random()) + 's" repeatCount="indefinite"/></circle>';
+
+            // Edge midpoint label
+            var mx = (x1 + x2) / 2 + (x2 - x1) * curveStrength * 0.5;
+            var my = (y1 + y2) / 2 + (y2 - y1) * curveStrength * 0.5 - 8;
+            html += '<text x="' + mx + '" y="' + my + '" text-anchor="middle" fill="' + col + '" font-size="9" font-family="var(--font-mono)" opacity="0.7" class="graph-edge-label' + dimClass + '">' + escapeHtml(e.type) + '</text>';
         });
 
-        // Draw nodes
+        // ── Draw nodes ──
         nodes.forEach(function(n, i) {
-            html += '<circle cx="' + n.x + '" cy="' + n.y + '" r="42" fill="var(--bg-surface)" stroke="var(--border-color)" stroke-width="1.5" class="graph-node" data-idx="' + i + '">';
+            var dimClass = hoveredNode && !isConnected(hoveredNode, n) ? ' dimmed' : '';
+            var highlightClass = hoveredNode === n ? ' highlighted' : '';
+            var isSelected = selectedNode === n;
+            var nodeR = isSelected ? 52 : 44;
+            var filter = hoveredNode === n ? ' filter="url(#nodeGlow)"' : '';
+
+            // Node shadow
+            html += '<circle cx="' + (n.x + 2) + '" cy="' + (n.y + 2) + '" r="' + nodeR + '" fill="rgba(0,0,0,0.2)" class="graph-node-shadow' + dimClass + '"/>';
+            // Main circle
+            html += '<circle cx="' + n.x + '" cy="' + n.y + '" r="' + nodeR + '" fill="var(--bg-surface)" stroke="var(--border-color)" stroke-width="1.5" class="graph-node' + dimClass + highlightClass + '" data-idx="' + i + '"' + filter + '>';
             html += '<title>' + escapeHtml(n.name) + ' (' + n.fields + ' fields, ' + n.rels + ' relations)</title></circle>';
-            html += '<circle cx="' + n.x + '" cy="' + n.y + '" r="38" fill="none" stroke="var(--accent)" stroke-width="1" opacity="0.15" pointer-events="none"/>';
-            var label = n.name.length > 12 ? n.name.substring(0, 11) + '\u2026' : n.name;
-            html += '<text x="' + n.x + '" y="' + (n.y - 4) + '" text-anchor="middle" fill="var(--text-primary)" font-size="11" font-weight="600" font-family="var(--font-sans)" pointer-events="none">' + escapeHtml(label) + '</text>';
-            html += '<text x="' + n.x + '" y="' + (n.y + 12) + '" text-anchor="middle" fill="var(--text-faint)" font-size="9" font-family="var(--font-mono)" pointer-events="none">' + n.fields + ' fields</text>';
+            // Accent ring
+            html += '<circle cx="' + n.x + '" cy="' + n.y + '" r="' + (nodeR - 4) + '" fill="none" stroke="var(--accent)" stroke-width="1" opacity="' + (hoveredNode === n ? '0.5' : '0.15') + '" pointer-events="none"/>';
+            // Relation count indicator (small colored dots around the node)
+            if (n.rels > 0) {
+                html += '<circle cx="' + (n.x + nodeR - 6) + '" cy="' + (n.y - nodeR + 6) + '" r="8" fill="var(--accent)" opacity="0.9" pointer-events="none"/>';
+                html += '<text x="' + (n.x + nodeR - 6) + '" y="' + (n.y - nodeR + 10) + '" text-anchor="middle" fill="#000" font-size="8" font-weight="700" font-family="var(--font-mono)" pointer-events="none">' + n.rels + '</text>';
+            }
+            // Model name
+            var label = n.name.length > 14 ? n.name.substring(0, 13) + '\u2026' : n.name;
+            html += '<text x="' + n.x + '" y="' + (n.y - 6) + '" text-anchor="middle" fill="var(--text-primary)" font-size="' + (isSelected ? '12' : '11') + '" font-weight="600" font-family="var(--font-sans)" pointer-events="none" class="' + dimClass + '">' + escapeHtml(label) + '</text>';
+            // Field count
+            html += '<text x="' + n.x + '" y="' + (n.y + 10) + '" text-anchor="middle" fill="var(--text-faint)" font-size="9" font-family="var(--font-mono)" pointer-events="none" class="' + dimClass + '">' + n.fields + ' fields</text>';
+            // Relation summary below
+            if (n.rels > 0 && !isSelected) {
+                html += '<text x="' + n.x + '" y="' + (n.y + 22) + '" text-anchor="middle" fill="var(--accent)" font-size="7.5" font-family="var(--font-mono)" pointer-events="none" opacity="0.6" class="' + dimClass + '">' + n.rels + ' rel' + (n.rels > 1 ? 's' : '') + '</text>';
+            }
         });
 
+        html += '</g>';
         svg.innerHTML = html;
+        renderMinimap();
     }
     render();
 
-    // Drag support
+    // ── Minimap ──
+    function renderMinimap() {
+        var mm = document.getElementById('minimapSvg');
+        if (!mm) return;
+        var scale = 0.12;
+        var mhtml = '';
+        edges.forEach(function(e) {
+            mhtml += '<line x1="' + (e.from.x * scale) + '" y1="' + (e.from.y * scale) + '" x2="' + (e.to.x * scale) + '" y2="' + (e.to.y * scale) + '" stroke="var(--text-faint)" stroke-width="0.5" opacity="0.3"/>';
+        });
+        nodes.forEach(function(n) {
+            mhtml += '<circle cx="' + (n.x * scale) + '" cy="' + (n.y * scale) + '" r="3" fill="var(--accent)" opacity="0.6"/>';
+        });
+        // Viewport rectangle
+        var vw = (container.clientWidth / zoom) * scale;
+        var vh = (container.clientHeight / zoom) * scale;
+        var vx = (-panX / zoom) * scale;
+        var vy = (-panY / zoom) * scale;
+        mhtml += '<rect class="graph-viewport-rect" x="' + vx + '" y="' + vy + '" width="' + vw + '" height="' + vh + '"/>';
+        mm.innerHTML = mhtml;
+    }
+
+    // ── Tooltip ──
+    var tooltip = document.getElementById('graphTooltip');
+    function showTooltipForNode(n, clientX, clientY) {
+        var rect = container.getBoundingClientRect();
+        var x = clientX - rect.left + 16;
+        var y = clientY - rect.top - 10;
+        var fieldsHtml = '';
+        var maxFields = 6;
+        (n.fieldList || []).slice(0, maxFields).forEach(function(f) {
+            fieldsHtml += '<div class="graph-tooltip-field">' + escapeHtml(f.name) + ' <span style="color:var(--purple);opacity:0.7;">' + escapeHtml(f.type) + '</span></div>';
+        });
+        if ((n.fieldList || []).length > maxFields) {
+            fieldsHtml += '<div class="graph-tooltip-field" style="color:var(--text-faint);">+' + ((n.fieldList || []).length - maxFields) + ' more…</div>';
+        }
+        var relHtml = '';
+        (n.relList || []).forEach(function(r) {
+            var c = r.type === 'FK' ? 'var(--accent)' : r.type === 'O2O' ? 'var(--info)' : 'var(--warning)';
+            relHtml += '<div class="graph-tooltip-field"><span style="color:' + c + ';">' + r.type + '</span> → ' + escapeHtml(r.to) + '</div>';
+        });
+        tooltip.innerHTML = '<div class="graph-tooltip-title">' + escapeHtml(n.name) + '</div>' +
+            '<div style="font-size:0.65rem;color:var(--text-faint);margin-bottom:6px;">' + n.fields + ' fields · ' + n.rels + ' relations</div>' +
+            fieldsHtml +
+            (relHtml ? '<div style="margin-top:4px;padding-top:4px;border-top:1px solid var(--border-subtle);">' + relHtml + '</div>' : '');
+        tooltip.style.left = x + 'px';
+        tooltip.style.top = y + 'px';
+        tooltip.classList.add('visible');
+    }
+    function hideTooltip() {
+        tooltip.classList.remove('visible');
+    }
+
+    // ── Drag support ──
     var dragging = null, dragOffX = 0, dragOffY = 0;
+    var isPanning = false, panStartX = 0, panStartY = 0, panStartPanX = 0, panStartPanY = 0;
+
     svg.addEventListener('mousedown', function(e) {
         var el = e.target.closest('.graph-node');
-        if (!el) return;
-        var idx = parseInt(el.getAttribute('data-idx'), 10);
-        dragging = nodes[idx];
-        var rect = svg.getBoundingClientRect();
-        dragOffX = e.clientX - rect.left - dragging.x;
-        dragOffY = e.clientY - rect.top - dragging.y;
-        container.style.cursor = 'grabbing';
-        e.preventDefault();
+        if (el) {
+            var idx = parseInt(el.getAttribute('data-idx'), 10);
+            dragging = nodes[idx];
+            var rect = svg.getBoundingClientRect();
+            var worldX = (e.clientX - rect.left - panX) / zoom;
+            var worldY = (e.clientY - rect.top - panY) / zoom;
+            dragOffX = worldX - dragging.x;
+            dragOffY = worldY - dragging.y;
+            container.style.cursor = 'grabbing';
+            e.preventDefault();
+        } else {
+            // Pan
+            isPanning = true;
+            panStartX = e.clientX;
+            panStartY = e.clientY;
+            panStartPanX = panX;
+            panStartPanY = panY;
+            container.style.cursor = 'grabbing';
+            e.preventDefault();
+        }
     });
+
     document.addEventListener('mousemove', function(e) {
-        if (!dragging) return;
+        if (dragging) {
+            var rect = svg.getBoundingClientRect();
+            var worldX = (e.clientX - rect.left - panX) / zoom;
+            var worldY = (e.clientY - rect.top - panY) / zoom;
+            dragging.x = Math.max(70, Math.min(W - 70, worldX - dragOffX));
+            dragging.y = Math.max(50, Math.min(H - 50, worldY - dragOffY));
+            render();
+        } else if (isPanning) {
+            panX = panStartPanX + (e.clientX - panStartX);
+            panY = panStartPanY + (e.clientY - panStartY);
+            render();
+        }
+
+        // Hover highlight
+        if (!dragging && !isPanning) {
+            var el = e.target.closest('.graph-node');
+            if (el) {
+                var idx = parseInt(el.getAttribute('data-idx'), 10);
+                if (hoveredNode !== nodes[idx]) {
+                    hoveredNode = nodes[idx];
+                    render();
+                    showTooltipForNode(hoveredNode, e.clientX, e.clientY);
+                }
+            } else if (hoveredNode) {
+                hoveredNode = null;
+                render();
+                hideTooltip();
+            }
+        }
+    });
+
+    document.addEventListener('mouseup', function() {
+        if (dragging) {
+            dragging = null;
+            container.style.cursor = 'grab';
+        }
+        if (isPanning) {
+            isPanning = false;
+            container.style.cursor = 'grab';
+        }
+    });
+
+    // ── Click to select node (expand fields) ──
+    svg.addEventListener('click', function(e) {
+        var el = e.target.closest('.graph-node');
+        if (el) {
+            var idx = parseInt(el.getAttribute('data-idx'), 10);
+            selectedNode = selectedNode === nodes[idx] ? null : nodes[idx];
+            render();
+        }
+    });
+
+    // ── Zoom with mouse wheel ──
+    container.addEventListener('wheel', function(e) {
+        e.preventDefault();
         var rect = svg.getBoundingClientRect();
-        dragging.x = Math.max(60, Math.min(W - 60, e.clientX - rect.left - dragOffX));
-        dragging.y = Math.max(40, Math.min(H - 40, e.clientY - rect.top - dragOffY));
+        var mouseX = e.clientX - rect.left;
+        var mouseY = e.clientY - rect.top;
+
+        var oldZoom = zoom;
+        var delta = e.deltaY > 0 ? 0.9 : 1.1;
+        zoom = Math.max(0.3, Math.min(3, zoom * delta));
+
+        // Zoom toward mouse position
+        panX = mouseX - (mouseX - panX) * (zoom / oldZoom);
+        panY = mouseY - (mouseY - panY) * (zoom / oldZoom);
+        render();
+    }, { passive: false });
+
+    // ── Graph Controls ──
+    document.getElementById('graphZoomIn').addEventListener('click', function() {
+        zoom = Math.min(3, zoom * 1.2);
         render();
     });
-    document.addEventListener('mouseup', function() {
-        if (!dragging) return;
-        dragging = null;
-        container.style.cursor = 'grab';
+    document.getElementById('graphZoomOut').addEventListener('click', function() {
+        zoom = Math.max(0.3, zoom * 0.8);
+        render();
     });
+    document.getElementById('graphFitView').addEventListener('click', function() {
+        if (!nodes.length) return;
+        var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        nodes.forEach(function(n) {
+            minX = Math.min(minX, n.x - 60);
+            maxX = Math.max(maxX, n.x + 60);
+            minY = Math.min(minY, n.y - 60);
+            maxY = Math.max(maxY, n.y + 60);
+        });
+        var graphW = maxX - minX;
+        var graphH = maxY - minY;
+        var cw = container.clientWidth;
+        var ch = container.clientHeight;
+        zoom = Math.min(cw / graphW, ch / graphH, 2) * 0.9;
+        panX = (cw - graphW * zoom) / 2 - minX * zoom;
+        panY = (ch - graphH * zoom) / 2 - minY * zoom;
+        render();
+    });
+    document.getElementById('graphReset').addEventListener('click', function() {
+        zoom = 1; panX = 0; panY = 0;
+        nodes.forEach(function(n, i) {
+            var angle = (2 * Math.PI * i) / nodes.length;
+            n.x = W / 2 + (W * 0.30) * Math.cos(angle);
+            n.y = H / 2 + (H * 0.32) * Math.sin(angle);
+            n.vx = 0; n.vy = 0;
+        });
+        simulate();
+        selectedNode = null;
+        hoveredNode = null;
+        render();
+    });
+    document.getElementById('graphFullscreen').addEventListener('click', function() {
+        if (!document.fullscreenElement) {
+            container.requestFullscreen().catch(function(){});
+            container.style.minHeight = '100vh';
+            H = window.innerHeight;
+            svg.setAttribute('height', H);
+            svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+        } else {
+            document.exitFullscreen();
+            container.style.minHeight = '500px';
+            H = Math.max(500, schema.length * 55);
+            svg.setAttribute('height', H);
+            svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+        }
+        render();
+    });
+
+    // ── Graph Search ──
+    var graphSearch = document.getElementById('graphSearchInput');
+    if (graphSearch) {
+        graphSearch.addEventListener('input', function() {
+            var q = this.value.trim().toLowerCase();
+            if (!q) {
+                hoveredNode = null;
+                render();
+                return;
+            }
+            var found = nodes.find(function(n) { return n.name.toLowerCase().includes(q); });
+            if (found) {
+                hoveredNode = found;
+                // Center on found node
+                panX = container.clientWidth / 2 - found.x * zoom;
+                panY = container.clientHeight / 2 - found.y * zoom;
+                render();
+            }
+        });
+    }
 }
 
 {% endblock %}

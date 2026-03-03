@@ -3,18 +3,51 @@
 {% block breadcrumb %}Audit Log{% endblock %}
 
 {% block content %}
-<div class="page-header-row">
-    <h2><i class="icon-scroll-text" style="font-size:18px;vertical-align:-2px;margin-right:6px;opacity:0.4;"></i>Audit Log</h2>
+<div class="page-header">
+    <h1>Audit Log</h1>
+    <p>Complete activity trail — every action, login, and data change.</p>
 </div>
 
-<div class="glass-card" style="padding:0;">
-    <div class="card-header">
-        <span class="card-title">{{ total }} entries</span>
+{# ── Stats row ── #}
+<div class="stats-row" style="margin-bottom:28px;">
+    <div class="stat-item">
+        <div class="stat-number">{{ total }}</div>
+        <div class="stat-label">Total Entries</div>
     </div>
+    <div class="stat-item">
+        <div class="stat-number">{{ entries|selectattr('action','equalto','create')|list|length }}</div>
+        <div class="stat-label"><span style="color:var(--success);">●</span> Creates</div>
+    </div>
+    <div class="stat-item">
+        <div class="stat-number">{{ entries|selectattr('action','equalto','update')|list|length }}</div>
+        <div class="stat-label"><span style="color:var(--info);">●</span> Updates</div>
+    </div>
+    <div class="stat-item">
+        <div class="stat-number">{{ entries|selectattr('action','equalto','delete')|list|length }}</div>
+        <div class="stat-label"><span style="color:var(--danger);">●</span> Deletes</div>
+    </div>
+</div>
+
+{# ── Filter toolbar ── #}
+<div class="toolbar" style="margin-bottom:16px;">
+    <div class="search-box">
+        <i class="icon-search" style="font-size:15px;color:var(--text-faint);flex-shrink:0;"></i>
+        <input type="text" id="auditSearchInput" placeholder="Filter audit entries…" autocomplete="off">
+    </div>
+    <div style="display:flex;gap:4px;">
+        <button class="btn btn-sm btn-secondary audit-filter-btn active" data-filter="all" onclick="filterAudit('all',this)">All</button>
+        <button class="btn btn-sm btn-secondary audit-filter-btn" data-filter="create" onclick="filterAudit('create',this)">Creates</button>
+        <button class="btn btn-sm btn-secondary audit-filter-btn" data-filter="update" onclick="filterAudit('update',this)">Updates</button>
+        <button class="btn btn-sm btn-secondary audit-filter-btn" data-filter="delete" onclick="filterAudit('delete',this)">Deletes</button>
+        <button class="btn btn-sm btn-secondary audit-filter-btn" data-filter="login" onclick="filterAudit('login',this)">Logins</button>
+    </div>
+</div>
+
+<div class="glass-card" style="padding:0;" id="auditList">
 
     {% if entries %}
         {% for entry in entries %}
-        <div class="audit-entry">
+        <div class="audit-entry" data-action="{{ entry.action }}" data-search="{{ entry.username|default('')|lower }} {{ entry.model_name|default('')|lower }} {{ entry.action|lower }}">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 {% set action_cls = 'audit-create' if entry.action in ('create', 'login') else ('audit-update' if entry.action in ('update', 'bulk_action') else ('audit-delete' if entry.action == 'delete' else 'audit-login')) %}
                 <span class="audit-action {{ action_cls }}">{{ entry.action }}</span>
@@ -92,4 +125,30 @@
     </div>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+// ── Audit filter by action type ──
+window.filterAudit = function(action, btn) {
+    document.querySelectorAll('.audit-filter-btn').forEach(function(b) { b.classList.remove('active'); });
+    if (btn) btn.classList.add('active');
+    document.querySelectorAll('#auditList .audit-entry').forEach(function(entry) {
+        if (action === 'all') { entry.style.display = ''; return; }
+        var entryAction = entry.getAttribute('data-action') || '';
+        var match = (action === 'login') ? (entryAction === 'login' || entryAction === 'login_failed') : (entryAction === action);
+        entry.style.display = match ? '' : 'none';
+    });
+};
+// ── Audit text search ──
+(function() {
+    var input = document.getElementById('auditSearchInput');
+    if (!input) return;
+    input.addEventListener('input', function() {
+        var q = this.value.trim().toLowerCase();
+        document.querySelectorAll('#auditList .audit-entry').forEach(function(entry) {
+            var text = entry.getAttribute('data-search') || '';
+            entry.style.display = (!q || text.includes(q)) ? '' : 'none';
+        });
+    });
+})();
 {% endblock %}

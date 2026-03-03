@@ -35,6 +35,8 @@
     <div class="ambient-blob ambient-blob-blue"></div>
     <div class="ambient-blob ambient-blob-purple"></div>
     <div class="ambient-blob ambient-blob-cyan"></div>
+    {# ── Scroll Progress Bar ── #}
+    <div class="scroll-progress"><div class="scroll-progress-bar" id="scrollProgress"></div></div>
 
     <div class="admin-layout">
         {# ── Sidebar ── #}
@@ -112,6 +114,50 @@
             c.classList.toggle('active', c.getAttribute('data-tab') === tabName);
         });
     }
+
+    // ── Sidebar collapse toggle ──
+    window.toggleSidebar = function() {
+        var sidebar = document.getElementById('adminSidebar');
+        var icon = document.getElementById('sidebarCollapseIcon');
+        sidebar.classList.toggle('collapsed');
+        if (icon) icon.style.transform = sidebar.classList.contains('collapsed') ? 'rotate(180deg)' : '';
+        localStorage.setItem('aquilia-sidebar-collapsed', sidebar.classList.contains('collapsed') ? '1' : '');
+    };
+    (function() {
+        if (localStorage.getItem('aquilia-sidebar-collapsed') === '1') {
+            var sidebar = document.getElementById('adminSidebar');
+            var icon = document.getElementById('sidebarCollapseIcon');
+            if (sidebar) { sidebar.classList.add('collapsed'); }
+            if (icon) { icon.style.transform = 'rotate(180deg)'; }
+        }
+    })();
+
+    // ── Sidebar search filter ──
+    (function() {
+        var input = document.getElementById('sidebarSearchInput');
+        if (!input) return;
+        input.addEventListener('input', function() {
+            var q = this.value.trim().toLowerCase();
+            document.querySelectorAll('.sidebar-link[data-sidebar-label]').forEach(function(link) {
+                var label = link.getAttribute('data-sidebar-label') || '';
+                link.style.display = (!q || label.includes(q)) ? '' : 'none';
+            });
+            document.querySelectorAll('[data-sidebar-section]').forEach(function(sec) {
+                var visible = sec.querySelectorAll('.sidebar-link[data-sidebar-label]:not([style*="display: none"])');
+                sec.style.display = visible.length || !q ? '' : 'none';
+            });
+        });
+    })();
+
+    // ── Scroll progress bar ──
+    (function() {
+        var bar = document.getElementById('scrollProgress');
+        if (!bar) return;
+        window.addEventListener('scroll', function() {
+            var h = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = h > 0 ? (window.scrollY / h * 100) + '%' : '0%';
+        }, { passive: true });
+    })();
     // ── Toast notification system ──
     (function() {
         var container = document.createElement('div');
@@ -156,8 +202,9 @@
                 overlay.innerHTML = '<div style="background:var(--bg-elevated);border:1px solid var(--border-color);border-radius:14px;padding:28px 36px;max-width:420px;width:90%;box-shadow:0 24px 64px rgba(0,0,0,0.4);">' +
                     '<h3 style="margin:0 0 18px;color:var(--text-primary);font-size:1rem;font-weight:600;">Keyboard Shortcuts</h3>' +
                     '<div style="display:grid;grid-template-columns:auto 1fr;gap:8px 18px;font-size:0.82rem;color:var(--text-secondary);">' +
-                    '<kbd style="background:var(--bg-surface);padding:2px 8px;border-radius:4px;font-size:0.75rem;color:var(--text-primary);font-family:var(--font-mono);border:1px solid var(--border-color);">⌘K</kbd><span>Focus search</span>' +
+                    '<kbd style="background:var(--bg-surface);padding:2px 8px;border-radius:4px;font-size:0.75rem;color:var(--text-primary);font-family:var(--font-mono);border:1px solid var(--border-color);">⌘K</kbd><span>Focus search / Command palette</span>' +
                     '<kbd style="background:var(--bg-surface);padding:2px 8px;border-radius:4px;font-size:0.75rem;color:var(--text-primary);font-family:var(--font-mono);border:1px solid var(--border-color);">N</kbd><span>Add new record</span>' +
+                    '<kbd style="background:var(--bg-surface);padding:2px 8px;border-radius:4px;font-size:0.75rem;color:var(--text-primary);font-family:var(--font-mono);border:1px solid var(--border-color);">B</kbd><span>Toggle sidebar</span>' +
                     '<kbd style="background:var(--bg-surface);padding:2px 8px;border-radius:4px;font-size:0.75rem;color:var(--text-primary);font-family:var(--font-mono);border:1px solid var(--border-color);">Shift+?</kbd><span>Show this help</span>' +
                     '<kbd style="background:var(--bg-surface);padding:2px 8px;border-radius:4px;font-size:0.75rem;color:var(--text-primary);font-family:var(--font-mono);border:1px solid var(--border-color);">Esc</kbd><span>Close dialogs</span>' +
                     '</div>' +
@@ -169,6 +216,10 @@
             if (e.key === 'Escape') {
                 var ov = document.getElementById('shortcut-overlay');
                 if (ov) ov.remove();
+            }
+            // 'B' — toggle sidebar
+            if (e.key === 'b' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {
+                toggleSidebar();
             }
         });
     })();
