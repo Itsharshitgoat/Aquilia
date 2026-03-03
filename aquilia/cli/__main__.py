@@ -2185,25 +2185,44 @@ def admin_createsuperuser(ctx, username: str, email: str, password: str, first_n
     import asyncio
     import time as _ctime
 
-    # ── Validate inputs ──────────────────────────────────────────────
     click.echo()
     banner("Aquilia", subtitle="Admin Superuser Setup")
     click.echo()
 
-    # Validate username
-    if not username or len(username.strip()) < 2:
-        error(f"  {_CROSS} Username must be at least 2 characters")
-        sys.exit(1)
+    # ── Re-prompt until valid (handles ctx.invoke() with empty defaults) ──
+    while not username or len(username.strip()) < 2:
+        username = click.prompt(
+            click.style("  Username", fg="cyan", bold=True),
+            default="",
+            show_default=False,
+            prompt_suffix=" ",
+        ).strip()
+        if not username or len(username.strip()) < 2:
+            error(f"  {_CROSS} Username must be at least 2 characters")
 
-    # Validate email is provided and looks valid
-    if not email or "@" not in email or "." not in email.split("@")[-1]:
-        error(f"  {_CROSS} A valid email address is required")
-        sys.exit(1)
+    username = username.strip()
 
-    # Validate password strength
-    if len(password) < 4:
-        error(f"  {_CROSS} Password must be at least 4 characters")
-        sys.exit(1)
+    while not email or "@" not in email or "." not in email.split("@")[-1]:
+        email = click.prompt(
+            click.style("  Email", fg="cyan", bold=True),
+            default="",
+            show_default=False,
+            prompt_suffix=" ",
+        ).strip()
+        if not email or "@" not in email or "." not in email.split("@")[-1]:
+            error(f"  {_CROSS} A valid email address is required")
+
+    while not password or len(password) < 4:
+        password = click.prompt(
+            click.style("  Password", fg="cyan", bold=True),
+            default="",
+            show_default=False,
+            hide_input=True,
+            confirmation_prompt=click.style("  Confirm password", fg="cyan", bold=True),
+            prompt_suffix=" ",
+        )
+        if not password or len(password) < 4:
+            error(f"  {_CROSS} Password must be at least 4 characters")
 
     # ── Optional profile fields (interactive) ────────────────────────
     interactive = sys.stdin.isatty() and not no_input
@@ -2424,22 +2443,44 @@ def admin_createstaff(ctx, username: str, email: str, password: str, first_name:
     import asyncio
     import time as _ctime
 
-    # ── Validate inputs ──────────────────────────────────────────────
     click.echo()
     banner("Aquilia", subtitle="Admin Staff User Setup")
     click.echo()
 
-    if not username or len(username.strip()) < 2:
-        error(f"  {_CROSS} Username must be at least 2 characters")
-        sys.exit(1)
+    # ── Re-prompt until valid (handles ctx.invoke() with empty defaults) ──
+    while not username or len(username.strip()) < 2:
+        username = click.prompt(
+            click.style("  Username", fg="cyan", bold=True),
+            default="",
+            show_default=False,
+            prompt_suffix=" ",
+        ).strip()
+        if not username or len(username.strip()) < 2:
+            error(f"  {_CROSS} Username must be at least 2 characters")
 
-    if not email or "@" not in email or "." not in email.split("@")[-1]:
-        error(f"  {_CROSS} A valid email address is required")
-        sys.exit(1)
+    username = username.strip()
 
-    if len(password) < 4:
-        error(f"  {_CROSS} Password must be at least 4 characters")
-        sys.exit(1)
+    while not email or "@" not in email or "." not in email.split("@")[-1]:
+        email = click.prompt(
+            click.style("  Email", fg="cyan", bold=True),
+            default="",
+            show_default=False,
+            prompt_suffix=" ",
+        ).strip()
+        if not email or "@" not in email or "." not in email.split("@")[-1]:
+            error(f"  {_CROSS} A valid email address is required")
+
+    while not password or len(password) < 4:
+        password = click.prompt(
+            click.style("  Password", fg="cyan", bold=True),
+            default="",
+            show_default=False,
+            hide_input=True,
+            confirmation_prompt=click.style("  Confirm password", fg="cyan", bold=True),
+            prompt_suffix=" ",
+        )
+        if not password or len(password) < 4:
+            error(f"  {_CROSS} Password must be at least 4 characters")
 
     # ── Optional profile fields (interactive) ────────────────────────
     interactive = sys.stdin.isatty() and not no_input
@@ -2815,15 +2856,24 @@ def admin_setup(ctx, non_interactive: bool, database_url: Optional[str]):
 
     # ── Step 1: Ensure required imports ──────────────────────────────
     step(1, "Checking imports...")
+    # Check only actual import lines (not comments) to avoid false positives
+    # when class names appear inside commented-out config blocks.
+    import_lines = "\n".join(
+        line for line in content.splitlines()
+        if (line.strip().startswith("from ") or line.strip().startswith("import "))
+        and not line.strip().startswith("#")
+    )
     needed_imports: list[str] = []
-    if "from datetime import timedelta" not in content and "timedelta" not in content:
+    if "timedelta" not in import_lines:
         needed_imports.append("from datetime import timedelta")
-    if "SessionPolicy" not in content:
+    if "SessionPolicy" not in import_lines:
         needed_imports.append("from aquilia.sessions import SessionPolicy")
-    if "TransportPolicy" not in content:
-        # Check if user already has 'from aquilia import ...' or 'from aquilia.sessions import ...'
-        # Use aquilia.sessions for the import to be safe
+    if "TransportPolicy" not in import_lines:
         needed_imports.append("from aquilia.sessions import TransportPolicy")
+    if "PersistencePolicy" not in import_lines:
+        needed_imports.append("from aquilia.sessions import PersistencePolicy")
+    if "ConcurrencyPolicy" not in import_lines:
+        needed_imports.append("from aquilia.sessions import ConcurrencyPolicy")
 
     if needed_imports:
         # Insert after the last import line
@@ -2889,6 +2939,21 @@ def admin_setup(ctx, non_interactive: bool, database_url: Optional[str]):
                 name="default",
                 ttl=timedelta(days=7),
                 idle_timeout=timedelta(hours=1),
+                absolute_timeout=timedelta(days=30),
+                rotate_on_use=False,
+                rotate_on_privilege_change=True,
+                fingerprint_binding=False,
+                scope="user",
+                persistence=PersistencePolicy(
+                    enabled=True,
+                    store_name="default",
+                    write_through=True,
+                    compress=False,
+                ),
+                concurrency=ConcurrencyPolicy(
+                    max_sessions_per_principal=5,
+                    behavior_on_limit="evict_oldest",
+                ),
                 transport=TransportPolicy(
                     cookie_name="aquilia_admin_session",
                     cookie_secure=False,

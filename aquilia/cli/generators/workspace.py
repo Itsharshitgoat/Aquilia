@@ -619,6 +619,27 @@ class WorkspaceGenerator:
                 #             name="default",
                 #             ttl=timedelta(days=7),
                 #             idle_timeout=timedelta(hours=1),
+                #             absolute_timeout=timedelta(days=30),
+                #             rotate_on_use=False,
+                #             rotate_on_privilege_change=True,
+                #             fingerprint_binding=False,
+                #             scope="user",
+                #             persistence=PersistencePolicy(
+                #                 enabled=True,
+                #                 store_name="default",
+                #                 write_through=True,
+                #                 compress=False,
+                #             ),
+                #             concurrency=ConcurrencyPolicy(
+                #                 max_sessions_per_principal=5,
+                #                 behavior_on_limit="evict_oldest",
+                #             ),
+                #             transport=TransportPolicy(
+                #                 cookie_name="{self.name}_session",
+                #                 cookie_secure=False,
+                #                 cookie_httponly=True,
+                #                 cookie_samesite="lax",
+                #             ),
                 #         ),
                 #     ],
                 # )
@@ -670,6 +691,9 @@ class WorkspaceGenerator:
             """
 
             from aquilia import Workspace, Module, Integration
+            from datetime import timedelta
+            from aquilia.sessions import SessionPolicy, TransportPolicy
+            from aquilia.sessions import PersistencePolicy, ConcurrencyPolicy
 
 
             workspace = (
@@ -687,11 +711,43 @@ class WorkspaceGenerator:
                 .integrate(Integration.fault_handling(default_strategy="propagate"))
                 .integrate(Integration.patterns())
 
-                # Database (uncomment to enable)
-                # .integrate(Integration.database(url="sqlite:///db.sqlite3"))
+                # Database
+                .integrate(Integration.database(url="sqlite:///db.sqlite3"))
 
                 # Add modules:
                 #   .module(Module("users").route_prefix("/users"))
+
+                # Sessions
+                .sessions(
+                    policies=[
+                        SessionPolicy(
+                            name="default",
+                            ttl=timedelta(days=7),
+                            idle_timeout=timedelta(hours=1),
+                            absolute_timeout=timedelta(days=30),
+                            rotate_on_use=False,
+                            rotate_on_privilege_change=True,
+                            fingerprint_binding=False,
+                            scope="user",
+                            persistence=PersistencePolicy(
+                                enabled=True,
+                                store_name="default",
+                                write_through=True,
+                                compress=False,
+                            ),
+                            concurrency=ConcurrencyPolicy(
+                                max_sessions_per_principal=5,
+                                behavior_on_limit="evict_oldest",
+                            ),
+                            transport=TransportPolicy(
+                                cookie_name="{self.name}_session",
+                                cookie_secure=False,
+                                cookie_httponly=True,
+                                cookie_samesite="lax",
+                            ),
+                        ),
+                    ],
+                )
             )
 
 
