@@ -328,13 +328,11 @@ class TestAdminPermissions:
 
     def test_admin_role_enum_values(self):
         assert AdminRole.SUPERADMIN.value == "superadmin"
-        assert AdminRole.ADMIN.value == "admin"
         assert AdminRole.STAFF.value == "staff"
         assert AdminRole.VIEWER.value == "viewer"
 
     def test_admin_role_levels(self):
-        assert AdminRole.SUPERADMIN.level > AdminRole.ADMIN.level
-        assert AdminRole.ADMIN.level > AdminRole.STAFF.level
+        assert AdminRole.SUPERADMIN.level > AdminRole.STAFF.level
         assert AdminRole.STAFF.level > AdminRole.VIEWER.level
 
     def test_admin_permission_enum(self):
@@ -355,14 +353,15 @@ class TestAdminPermissions:
         assert AdminPermission.MODEL_DELETE not in perms
         assert AdminPermission.USER_MANAGE not in perms
 
-    def test_staff_cannot_delete(self):
+    def test_staff_has_delete_but_not_user_manage(self):
         perms = ROLE_PERMISSIONS[AdminRole.STAFF]
-        assert AdminPermission.MODEL_DELETE not in perms
+        assert AdminPermission.MODEL_DELETE in perms
+        assert AdminPermission.USER_MANAGE not in perms
 
     def test_get_admin_role_from_admin_role_attr(self):
         identity = MockIdentity(attributes={"admin_role": "admin"})
         role = get_admin_role(identity)
-        assert role == AdminRole.ADMIN
+        assert role == AdminRole.STAFF
 
     def test_get_admin_role_from_roles_list(self):
         identity = MockIdentity(roles=["superadmin"])
@@ -406,7 +405,7 @@ class TestAdminPermissions:
         assert has_model_permission(identity, "user", "delete") is False
 
     def test_require_admin_access_passes(self):
-        identity = MockIdentity(attributes={"admin_role": "admin"})
+        identity = MockIdentity(attributes={"admin_role": "staff"})
         # Should not raise
         require_admin_access(identity)
 

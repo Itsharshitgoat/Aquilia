@@ -1461,10 +1461,9 @@ class AdminController(Controller):
         try:
             from aquilia.admin.models import AdminUser
 
-            # Determine flags
+            # Three roles: superadmin, staff, viewer
             is_superuser = role == "superadmin"
-            is_staff = role in ("superadmin", "admin", "staff")
-            is_active = role != "viewer" or True  # viewers are also active
+            is_staff = role in ("superadmin", "staff")
 
             if is_superuser:
                 user = await AdminUser.create_superuser(
@@ -1484,7 +1483,8 @@ class AdminController(Controller):
                 user.first_name = first_name
             if last_name:
                 user.last_name = last_name
-            if not is_staff:
+            # Viewer: is_staff=False so they get read-only access
+            if role == "viewer":
                 user.is_staff = False
             user.is_active = True
             await user.save()

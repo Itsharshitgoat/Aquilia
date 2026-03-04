@@ -1568,9 +1568,8 @@ class AdminSite:
 
         roles = []
         role_descriptions = {
-            AdminRole.SUPERADMIN: "Full access to everything -- all admin operations.",
-            AdminRole.ADMIN: "Full CRUD on all models, audit log, user management.",
-            AdminRole.STAFF: "View and edit access -- no delete by default.",
+            AdminRole.SUPERADMIN: "Full access to everything -- all admin operations, user management.",
+            AdminRole.STAFF: "Full CRUD on models, audit log, exports, bulk actions.",
             AdminRole.VIEWER: "Read-only access to admin dashboard and data.",
         }
 
