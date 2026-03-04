@@ -508,28 +508,208 @@ class AdminSite:
 
     async def get_dashboard_stats(self) -> Dict[str, Any]:
         """
-        Aggregate dashboard statistics.
+        Aggregate comprehensive dashboard statistics.
 
-        Returns model counts and recent audit entries.
+        Returns model counts, audit breakdowns, system health,
+        environment info, and recent activity for a rich dashboard.
         """
+        import os
+        import platform
+        import sys
+        import time
+        from collections import Counter
+        from datetime import datetime, timezone
+
         stats: Dict[str, Any] = {
             "total_models": len(self._registry),
             "model_counts": {},
             "recent_actions": [],
+            "audit_summary": {},
+            "environment": {},
+            "top_models": [],
+            "active_users": [],
+            "system_health": {},
         }
 
-        # Count records per model (best effort)
+        # ── Count records per model (best effort) ──
+        total_records = 0
+        model_record_list: list = []
         for model_cls, admin in self._registry.items():
             try:
                 count = await model_cls.objects.count()
                 stats["model_counts"][model_cls.__name__] = count
+                total_records += count if isinstance(count, int) else 0
+                model_record_list.append({
+                    "name": model_cls.__name__,
+                    "verbose_name": admin.get_model_name(),
+                    "count": count if isinstance(count, int) else 0,
+                    "icon": getattr(admin, "icon", "table"),
+                    "app_label": admin.get_app_label(),
+                })
             except Exception:
                 stats["model_counts"][model_cls.__name__] = "?"
+                model_record_list.append({
+                    "name": model_cls.__name__,
+                    "verbose_name": admin.get_model_name(),
+                    "count": 0,
+                    "icon": getattr(admin, "icon", "table"),
+                    "app_label": admin.get_app_label(),
+                })
 
-        # Recent audit entries
-        stats["recent_actions"] = [
-            e.to_dict() for e in self.audit_log.get_entries(limit=10)
+        stats["total_records"] = total_records
+
+        # Top models by record count (descending, max 6)
+        model_record_list.sort(key=lambda m: m["count"], reverse=True)
+        stats["top_models"] = model_record_list[:6]
+
+        # ── Audit breakdown ──
+        all_audit = self.audit_log.get_entries(limit=500)
+        stats["recent_actions"] = [e.to_dict() for e in all_audit[:10]]
+
+        action_counter: Counter = Counter()
+        user_counter: Counter = Counter()
+        hourly_counter: Counter = Counter()
+        now = datetime.now(timezone.utc)
+        logins_24h = 0
+        failed_logins = 0
+
+        for entry in all_audit:
+            action_counter[entry.action.value] += 1
+            if entry.username:
+                user_counter[entry.username] += 1
+
+            # Hourly distribution (last 24h)
+            try:
+                ts = entry.timestamp
+                if ts.tzinfo is None:
+                    from datetime import timezone as _tz
+                    ts = ts.replace(tzinfo=_tz.utc)
+                diff_h = (now - ts).total_seconds() / 3600
+                if diff_h <= 24:
+                    hour_label = ts.strftime("%H:00")
+                    hourly_counter[hour_label] += 1
+                    if entry.action.value == "login":
+                        logins_24h += 1
+                    if entry.action.value == "login_failed":
+                        failed_logins += 1
+            except Exception:
+                pass
+
+        stats["audit_summary"] = {
+            "total_entries": len(all_audit),
+            "creates": action_counter.get("create", 0),
+            "updates": action_counter.get("update", 0),
+            "deletes": action_counter.get("delete", 0),
+            "logins": action_counter.get("login", 0),
+            "exports": action_counter.get("export", 0),
+            "logins_24h": logins_24h,
+            "failed_logins": failed_logins,
+            "action_breakdown": dict(action_counter.most_common(10)),
+            "hourly_activity": dict(sorted(hourly_counter.items())),
+        }
+
+        # Active users (top 5 by activity)
+        stats["active_users"] = [
+            {"username": u, "actions": c}
+            for u, c in user_counter.most_common(5)
         ]
+
+        # ── Environment info ──
+        stats["environment"] = {
+            "python_version": platform.python_version(),
+            "platform": platform.system(),
+            "architecture": platform.machine(),
+            "pid": os.getpid(),
+        }
+
+        # Server uptime via process start time
+        try:
+            import psutil
+            proc = psutil.Process(os.getpid())
+            uptime_secs = time.time() - proc.create_time()
+            if uptime_secs >= 86400:
+                uptime_str = f"{int(uptime_secs // 86400)}d {int((uptime_secs % 86400) // 3600)}h"
+            elif uptime_secs >= 3600:
+                uptime_str = f"{int(uptime_secs // 3600)}h {int((uptime_secs % 3600) // 60)}m"
+            else:
+                uptime_str = f"{int(uptime_secs // 60)}m {int(uptime_secs % 60)}s"
+            stats["environment"]["uptime"] = uptime_str
+            stats["environment"]["memory_mb"] = round(proc.memory_info().rss / (1024 * 1024), 1)
+            stats["environment"]["cpu_percent"] = proc.cpu_percent(interval=0.05)
+        except Exception:
+            stats["environment"]["uptime"] = "--"
+            stats["environment"]["memory_mb"] = "--"
+            stats["environment"]["cpu_percent"] = "--"
+
+        # ── System health quick-checks ──
+        health_status = "healthy"
+        health_checks: list = []
+
+        # Database check
+        db_ok = True
+        try:
+            first_model = next(iter(self._registry), None)
+            if first_model:
+                await first_model.objects.count()
+        except Exception:
+            db_ok = False
+
+        health_checks.append({
+            "name": "Database",
+            "status": "ok" if db_ok else "error",
+            "icon": "database",
+        })
+
+        # Audit log check (not overflowing)
+        try:
+            audit_log = self.audit_log
+            # Support both AdminAuditLog (has _entries) and ModelBackedAuditLog (has _fallback)
+            if hasattr(audit_log, '_entries'):
+                current = len(audit_log._entries)
+                capacity = audit_log._max_entries
+            elif hasattr(audit_log, '_fallback'):
+                current = len(audit_log._fallback._entries)
+                capacity = audit_log._fallback._max_entries
+            else:
+                current = 0
+                capacity = 10000
+            audit_ok = current < capacity * 0.9
+            health_checks.append({
+                "name": "Audit Log",
+                "status": "ok" if audit_ok else "warning",
+                "icon": "scroll-text",
+                "detail": f"{current}/{capacity}",
+            })
+        except Exception:
+            health_checks.append({
+                "name": "Audit Log",
+                "status": "ok",
+                "icon": "scroll-text",
+            })
+
+        # Memory check (if available)
+        try:
+            mem_mb = stats["environment"]["memory_mb"]
+            if isinstance(mem_mb, (int, float)):
+                mem_ok = mem_mb < 512
+                health_checks.append({
+                    "name": "Memory",
+                    "status": "ok" if mem_ok else "warning",
+                    "icon": "cpu",
+                    "detail": f"{mem_mb} MB",
+                })
+        except Exception:
+            pass
+
+        if any(c["status"] == "error" for c in health_checks):
+            health_status = "error"
+        elif any(c["status"] == "warning" for c in health_checks):
+            health_status = "warning"
+
+        stats["system_health"] = {
+            "status": health_status,
+            "checks": health_checks,
+        }
 
         return stats
 

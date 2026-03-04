@@ -156,8 +156,13 @@ def render_dashboard(
     """Render the admin dashboard."""
     model_counts = stats.get("model_counts", {})
     total_models = stats.get("total_models", 0)
-    total_records = sum(v for v in model_counts.values() if isinstance(v, int))
+    total_records = stats.get("total_records", sum(v for v in model_counts.values() if isinstance(v, int)))
     recent_actions = stats.get("recent_actions", [])
+    audit_summary = stats.get("audit_summary", {})
+    environment = stats.get("environment", {})
+    top_models = stats.get("top_models", [])
+    active_users = stats.get("active_users", [])
+    system_health = stats.get("system_health", {})
 
     if _HAS_JINJA2:
         return _render_template(
@@ -167,6 +172,11 @@ def render_dashboard(
             total_models=total_models,
             total_records=total_records,
             recent_actions=recent_actions,
+            audit_summary=audit_summary,
+            environment=environment,
+            top_models=top_models,
+            active_users=active_users,
+            system_health=system_health,
             identity_name=identity_name,
             identity_avatar=identity_avatar,
             site_title=site_title,
