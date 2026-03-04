@@ -47,6 +47,8 @@ from .templates import (
     render_permissions_page,
     render_workspace_page,
     render_monitoring_page,
+    render_containers_page,
+    render_pods_page,
     render_admin_users_page,
     render_profile_page,
     render_error_page,
@@ -1364,6 +1366,112 @@ class AdminController(Controller):
         monitoring_data = self.site.get_monitoring_data()
         return Response(
             content=_json.dumps(monitoring_data, default=str).encode("utf-8"),
+            status=200,
+            headers={"content-type": "application/json; charset=utf-8"},
+        )
+
+    # ── Containers Page ──────────────────────────────────────────────
+
+    @GET("/containers/")
+    async def containers_view(self, request, ctx: RequestCtx) -> Response:
+        """Docker containers -- images, volumes, networks & compose services."""
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
+
+        if not self.site.admin_config.is_module_enabled("containers"):
+            return self._module_disabled_response("Containers", identity)
+
+        self._ensure_initialized()
+
+        containers_data = self.site.get_containers_data()
+        app_list = self.site.get_app_list(identity)
+
+        html = render_containers_page(
+            containers_data=containers_data,
+            app_list=app_list,
+            identity_name=_get_identity_name(identity),
+                identity_avatar=_get_identity_avatar(identity),
+        )
+        return _html_response(html)
+
+    @GET("/containers/api/")
+    async def containers_api(self, request, ctx: RequestCtx) -> Response:
+        """JSON API endpoint for live-polling container metrics."""
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return Response(
+                content=b'{"error":"unauthorized"}',
+                status=401,
+                headers={"content-type": "application/json"},
+            )
+
+        if not self.site.admin_config.is_module_enabled("containers"):
+            return Response(
+                content=b'{"error":"containers disabled"}',
+                status=404,
+                headers={"content-type": "application/json"},
+            )
+
+        self._ensure_initialized()
+
+        import json as _json
+        containers_data = self.site.get_containers_data()
+        return Response(
+            content=_json.dumps(containers_data, default=str).encode("utf-8"),
+            status=200,
+            headers={"content-type": "application/json; charset=utf-8"},
+        )
+
+    # ── Pods Page ────────────────────────────────────────────────────
+
+    @GET("/pods/")
+    async def pods_view(self, request, ctx: RequestCtx) -> Response:
+        """Kubernetes pods -- deployments, services, ingresses & manifests."""
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return denied
+
+        if not self.site.admin_config.is_module_enabled("pods"):
+            return self._module_disabled_response("Pods", identity)
+
+        self._ensure_initialized()
+
+        pods_data = self.site.get_pods_data()
+        app_list = self.site.get_app_list(identity)
+
+        html = render_pods_page(
+            pods_data=pods_data,
+            app_list=app_list,
+            identity_name=_get_identity_name(identity),
+                identity_avatar=_get_identity_avatar(identity),
+        )
+        return _html_response(html)
+
+    @GET("/pods/api/")
+    async def pods_api(self, request, ctx: RequestCtx) -> Response:
+        """JSON API endpoint for live-polling pod metrics."""
+        identity, denied = _require_identity(ctx)
+        if denied:
+            return Response(
+                content=b'{"error":"unauthorized"}',
+                status=401,
+                headers={"content-type": "application/json"},
+            )
+
+        if not self.site.admin_config.is_module_enabled("pods"):
+            return Response(
+                content=b'{"error":"pods disabled"}',
+                status=404,
+                headers={"content-type": "application/json"},
+            )
+
+        self._ensure_initialized()
+
+        import json as _json
+        pods_data = self.site.get_pods_data()
+        return Response(
+            content=_json.dumps(pods_data, default=str).encode("utf-8"),
             status=200,
             headers={"content-type": "application/json; charset=utf-8"},
         )

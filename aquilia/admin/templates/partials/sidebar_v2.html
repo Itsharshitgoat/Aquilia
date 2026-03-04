@@ -67,6 +67,19 @@
     </div>
     {% endif %}
 
+    {# ── Infrastructure ── #}
+    {% if sections.get('infrastructure', true) %}
+    <div class="sidebar-section" data-sidebar-section>
+        <span class="sidebar-section-label">Infrastructure</span>
+        <a class="sidebar-link{{ ' active' if active_page == 'containers' else '' }}" href="{{ url_prefix|default('/admin') }}/containers/" data-sidebar-label="containers docker compose images volumes">
+            <i class="icon-container"></i> <span>Containers</span>
+        </a>
+        <a class="sidebar-link{{ ' active' if active_page == 'pods' else '' }}" href="{{ url_prefix|default('/admin') }}/pods/" data-sidebar-label="pods kubernetes k8s deployments services">
+            <i class="icon-cloud"></i> <span>Pods</span>
+        </a>
+    </div>
+    {% endif %}
+
     {# ── Security ── #}
     {% if sections.get('security', true) %}
     <div class="sidebar-section" data-sidebar-section>

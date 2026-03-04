@@ -561,6 +561,82 @@ def render_monitoring_page(
 <p>CPU: {cpu_pct}% · Memory: {mem_pct}%</p></div></body></html>"""
 
 
+def render_containers_page(
+    containers_data: Dict[str, Any],
+    app_list: Optional[List[Dict[str, Any]]] = None,
+    identity_name: str = "Admin",
+    identity_avatar: str = "",
+    *,
+    site_title: str = "Aquilia Admin",
+    url_prefix: str = "/admin",
+) -> str:
+    """Render the containers page with Docker Desktop-like container management."""
+    if _HAS_JINJA2:
+        return _render_template(
+            "containers.html",
+            data=containers_data,
+            containers=containers_data.get("containers", []),
+            compose=containers_data.get("compose", {}),
+            images=containers_data.get("images", []),
+            volumes=containers_data.get("volumes", []),
+            networks=containers_data.get("networks", []),
+            system_info=containers_data.get("system_info", {}),
+            dockerfile_info=containers_data.get("dockerfile_info", {}),
+            docker_available=containers_data.get("docker_available", False),
+            docker_version=containers_data.get("docker_version", ""),
+            error=containers_data.get("error", ""),
+            app_list=app_list or [],
+            active_page="containers",
+            identity_name=identity_name,
+            identity_avatar=identity_avatar,
+            site_title=site_title,
+            url_prefix=url_prefix,
+            page_title="Containers",
+        )
+    total = len(containers_data.get("containers", []))
+    return f"""<!DOCTYPE html><html lang="en" data-theme="dark"><head>
+<meta charset="UTF-8"><title>Containers -- Aquilia Admin</title><style>{_FALLBACK_CSS}</style></head>
+<body><div style="padding:24px"><h1>Containers</h1><p>{total} containers</p></div></body></html>"""
+
+
+def render_pods_page(
+    pods_data: Dict[str, Any],
+    app_list: Optional[List[Dict[str, Any]]] = None,
+    identity_name: str = "Admin",
+    identity_avatar: str = "",
+    *,
+    site_title: str = "Aquilia Admin",
+    url_prefix: str = "/admin",
+) -> str:
+    """Render the pods page with Kubernetes pod tracking and manifest viewer."""
+    if _HAS_JINJA2:
+        return _render_template(
+            "pods.html",
+            data=pods_data,
+            pods=pods_data.get("pods", []),
+            deployments=pods_data.get("deployments", []),
+            services=pods_data.get("services", []),
+            ingresses=pods_data.get("ingresses", []),
+            namespaces=pods_data.get("namespaces", []),
+            manifests=pods_data.get("manifests", []),
+            events=pods_data.get("events", []),
+            cluster_info=pods_data.get("cluster_info", {}),
+            kubectl_available=pods_data.get("kubectl_available", False),
+            error=pods_data.get("error", ""),
+            app_list=app_list or [],
+            active_page="pods",
+            identity_name=identity_name,
+            identity_avatar=identity_avatar,
+            site_title=site_title,
+            url_prefix=url_prefix,
+            page_title="Pods",
+        )
+    total = len(pods_data.get("pods", []))
+    return f"""<!DOCTYPE html><html lang="en" data-theme="dark"><head>
+<meta charset="UTF-8"><title>Pods -- Aquilia Admin</title><style>{_FALLBACK_CSS}</style></head>
+<body><div style="padding:24px"><h1>Kubernetes Pods</h1><p>{total} pods</p></div></body></html>"""
+
+
 def render_admin_users_page(
     users: List[Dict[str, Any]],
     app_list: Optional[List[Dict[str, Any]]] = None,
@@ -699,6 +775,8 @@ def render_disabled_page(
         "permissions": "icon-shield",
         "admin_users": "icon-users",
         "profile": "icon-user",
+        "containers": "icon-container",
+        "pods": "icon-cloud",
     }
     icon_class = _icon_map.get(icon_key, "icon-lock")
 

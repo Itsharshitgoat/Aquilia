@@ -156,6 +156,7 @@ class AdminConfig:
             "migrations": True, "config": True, "workspace": True,
             "permissions": True, "monitoring": False, "admin_users": True,
             "profile": True, "audit": False,
+            "containers": True, "pods": True,
         }
         modules = {**default_modules, **modules_raw}
 
@@ -1431,6 +1432,639 @@ class AdminSite:
                 if len(val) > 200:
                     val = val[:200] + "…"
                 result[key] = val
+        return result
+
+    # ── Containers & Pods data ───────────────────────────────────────
+
+    def get_containers_data(self) -> Dict[str, Any]:
+        """
+        Gather comprehensive Docker container and compose data.
+
+        Discovers:
+        - Running/stopped containers via ``docker ps``
+        - Compose services from ``docker-compose.yml``
+        - Docker system info (version, images, volumes, networks)
+        - Dockerfile metadata from workspace
+        - Container resource usage via ``docker stats``
+
+        Returns a dict with sections:
+            - docker_available: bool
+            - docker_version: str
+            - containers: list of container dicts
+            - compose: compose file metadata
+            - images: list of image dicts
+            - volumes: list of volume dicts
+            - networks: list of network dicts
+            - system_info: Docker system overview
+            - dockerfile_info: Dockerfile analysis
+            - error: optional error string
+        """
+        import json as _json
+        import os
+        import subprocess
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        result: Dict[str, Any] = {
+            "docker_available": False,
+            "docker_version": "",
+            "containers": [],
+            "compose": {"available": False, "services": [], "file_content": ""},
+            "images": [],
+            "volumes": [],
+            "networks": [],
+            "system_info": {},
+            "dockerfile_info": {},
+            "error": "",
+        }
+
+        def _run_docker(*args: str, timeout: int = 10) -> tuple:
+            """Run a docker command and return (success, stdout, stderr)."""
+            try:
+                proc = subprocess.run(
+                    ["docker", *args],
+                    capture_output=True, text=True, timeout=timeout,
+                )
+                return proc.returncode == 0, proc.stdout.strip(), proc.stderr.strip()
+            except FileNotFoundError:
+                return False, "", "Docker CLI not found"
+            except subprocess.TimeoutExpired:
+                return False, "", "Command timed out"
+            except Exception as e:
+                return False, "", str(e)
+
+        # ── Check Docker availability ──
+        ok, ver_out, ver_err = _run_docker("version", "--format", "{{.Server.Version}}")
+        if not ok:
+            # Try just docker info to see if daemon is reachable
+            ok2, _, _ = _run_docker("info", "--format", "{{.ServerVersion}}")
+            if not ok2:
+                result["error"] = ver_err or "Docker is not available"
+                return result
+
+        result["docker_available"] = True
+        result["docker_version"] = ver_out or "unknown"
+
+        # ── Docker system info ──
+        ok, info_out, _ = _run_docker(
+            "system", "info", "--format",
+            '{"containers":{{.Containers}},"running":{{.ContainersRunning}},'
+            '"paused":{{.ContainersPaused}},"stopped":{{.ContainersStopped}},'
+            '"images":{{.Images}},"server_version":"{{.ServerVersion}}",'
+            '"os":"{{.OperatingSystem}}","arch":"{{.Architecture}}",'
+            '"cpus":{{.NCPU}},"memory":"{{.MemTotal}}",'
+            '"storage_driver":"{{.Driver}}"}'
+        )
+        if ok and info_out:
+            try:
+                result["system_info"] = _json.loads(info_out)
+            except _json.JSONDecodeError:
+                result["system_info"] = {"raw": info_out}
+
+        # ── List containers (all, including stopped) ──
+        ok, ps_out, _ = _run_docker(
+            "ps", "-a", "--format",
+            '{"id":"{{.ID}}","name":"{{.Names}}","image":"{{.Image}}",'
+            '"status":"{{.Status}}","state":"{{.State}}","ports":"{{.Ports}}",'
+            '"created":"{{.CreatedAt}}","size":"{{.Size}}",'
+            '"command":"{{.Command}}","labels":"{{.Labels}}"}'
+        )
+        if ok and ps_out:
+            for line in ps_out.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    container = _json.loads(line)
+                    # Parse state for status classification
+                    state = container.get("state", "").lower()
+                    if state == "running":
+                        container["status_class"] = "running"
+                        container["status_icon"] = "▶"
+                    elif state == "exited":
+                        container["status_class"] = "stopped"
+                        container["status_icon"] = "■"
+                    elif state == "paused":
+                        container["status_class"] = "paused"
+                        container["status_icon"] = "⏸"
+                    elif state in ("restarting", "removing"):
+                        container["status_class"] = "warning"
+                        container["status_icon"] = "↻"
+                    elif state == "created":
+                        container["status_class"] = "created"
+                        container["status_icon"] = "○"
+                    elif state == "dead":
+                        container["status_class"] = "dead"
+                        container["status_icon"] = "✕"
+                    else:
+                        container["status_class"] = "unknown"
+                        container["status_icon"] = "?"
+                    result["containers"].append(container)
+                except _json.JSONDecodeError:
+                    continue
+
+        # ── Container stats (CPU/memory for running containers) ──
+        running_ids = [c["id"] for c in result["containers"]
+                       if c.get("status_class") == "running"]
+        if running_ids:
+            ok, stats_out, _ = _run_docker(
+                "stats", "--no-stream", "--format",
+                '{"id":"{{.ID}}","name":"{{.Name}}","cpu":"{{.CPUPerc}}",'
+                '"memory":"{{.MemUsage}}","mem_perc":"{{.MemPerc}}",'
+                '"net_io":"{{.NetIO}}","block_io":"{{.BlockIO}}",'
+                '"pids":"{{.PIDs}}"}',
+                timeout=15,
+            )
+            if ok and stats_out:
+                stats_map: Dict[str, Dict] = {}
+                for line in stats_out.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        stat = _json.loads(line)
+                        stats_map[stat["id"][:12]] = stat
+                    except _json.JSONDecodeError:
+                        continue
+                # Merge stats into containers
+                for c in result["containers"]:
+                    cid = c["id"][:12]
+                    if cid in stats_map:
+                        c["stats"] = stats_map[cid]
+
+        # ── Docker images ──
+        ok, img_out, _ = _run_docker(
+            "images", "--format",
+            '{"id":"{{.ID}}","repository":"{{.Repository}}","tag":"{{.Tag}}",'
+            '"size":"{{.Size}}","created":"{{.CreatedAt}}"}'
+        )
+        if ok and img_out:
+            for line in img_out.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    result["images"].append(_json.loads(line))
+                except _json.JSONDecodeError:
+                    continue
+
+        # ── Docker volumes ──
+        ok, vol_out, _ = _run_docker(
+            "volume", "ls", "--format",
+            '{"name":"{{.Name}}","driver":"{{.Driver}}","mountpoint":"{{.Mountpoint}}"}'
+        )
+        if ok and vol_out:
+            for line in vol_out.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    result["volumes"].append(_json.loads(line))
+                except _json.JSONDecodeError:
+                    continue
+
+        # ── Docker networks ──
+        ok, net_out, _ = _run_docker(
+            "network", "ls", "--format",
+            '{"id":"{{.ID}}","name":"{{.Name}}","driver":"{{.Driver}}","scope":"{{.Scope}}"}'
+        )
+        if ok and net_out:
+            for line in net_out.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    result["networks"].append(_json.loads(line))
+                except _json.JSONDecodeError:
+                    continue
+
+        # ── Compose file analysis ──
+        compose_path = self._find_workspace_path("docker-compose.yml", is_file=True)
+        if compose_path and compose_path.is_file():
+            result["compose"]["available"] = True
+            try:
+                content = compose_path.read_text(encoding="utf-8", errors="replace")
+                result["compose"]["file_content"] = content
+                # Parse services from YAML
+                try:
+                    import yaml
+                    parsed = yaml.safe_load(content)
+                    if isinstance(parsed, dict) and "services" in parsed:
+                        for svc_name, svc_conf in parsed["services"].items():
+                            result["compose"]["services"].append({
+                                "name": svc_name,
+                                "image": svc_conf.get("image", ""),
+                                "build": str(svc_conf.get("build", "")),
+                                "ports": svc_conf.get("ports", []),
+                                "volumes": svc_conf.get("volumes", []),
+                                "depends_on": (
+                                    list(svc_conf["depends_on"].keys())
+                                    if isinstance(svc_conf.get("depends_on"), dict)
+                                    else svc_conf.get("depends_on", [])
+                                ),
+                                "environment": svc_conf.get("environment", {}),
+                                "profiles": svc_conf.get("profiles", []),
+                                "restart": svc_conf.get("restart", ""),
+                                "healthcheck": bool(svc_conf.get("healthcheck")),
+                            })
+                except ImportError:
+                    # PyYAML not installed -- basic regex parsing
+                    import re
+                    svc_matches = re.findall(
+                        r'^\s{2}(\w[\w-]*):\s*$', content, re.MULTILINE,
+                    )
+                    for svc_name in svc_matches:
+                        result["compose"]["services"].append({
+                            "name": svc_name,
+                            "image": "",
+                            "build": "",
+                            "ports": [],
+                            "volumes": [],
+                            "depends_on": [],
+                            "environment": {},
+                            "profiles": [],
+                            "restart": "",
+                            "healthcheck": False,
+                        })
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        # ── Dockerfile analysis ──
+        dockerfile_path = self._find_workspace_path("Dockerfile", is_file=True)
+        if dockerfile_path and dockerfile_path.is_file():
+            try:
+                content = dockerfile_path.read_text(encoding="utf-8", errors="replace")
+                import re
+                result["dockerfile_info"] = {
+                    "exists": True,
+                    "path": str(dockerfile_path),
+                    "size": f"{dockerfile_path.stat().st_size / 1024:.1f} KB",
+                    "base_image": "",
+                    "stages": [],
+                    "exposed_ports": [],
+                    "env_vars": [],
+                    "copy_count": 0,
+                    "run_count": 0,
+                }
+                # Extract FROM instructions (multi-stage)
+                froms = re.findall(r'^FROM\s+(\S+)(?:\s+AS\s+(\S+))?',
+                                   content, re.MULTILINE | re.IGNORECASE)
+                if froms:
+                    result["dockerfile_info"]["base_image"] = froms[0][0]
+                    result["dockerfile_info"]["stages"] = [
+                        {"image": img, "alias": alias or ""}
+                        for img, alias in froms
+                    ]
+                # Exposed ports
+                ports = re.findall(r'^EXPOSE\s+(.+)', content, re.MULTILINE | re.IGNORECASE)
+                for p in ports:
+                    result["dockerfile_info"]["exposed_ports"].extend(p.split())
+                # ENV vars
+                envs = re.findall(r'^ENV\s+(\S+)', content, re.MULTILINE | re.IGNORECASE)
+                result["dockerfile_info"]["env_vars"] = envs
+                # Instruction counts
+                result["dockerfile_info"]["copy_count"] = len(
+                    re.findall(r'^COPY\s', content, re.MULTILINE | re.IGNORECASE)
+                )
+                result["dockerfile_info"]["run_count"] = len(
+                    re.findall(r'^RUN\s', content, re.MULTILINE | re.IGNORECASE)
+                )
+            except Exception:
+                result["dockerfile_info"] = {"exists": True, "path": str(dockerfile_path)}
+        else:
+            result["dockerfile_info"] = {"exists": False}
+
+        return result
+
+    def get_pods_data(self) -> Dict[str, Any]:
+        """
+        Gather comprehensive Kubernetes pod and manifest data.
+
+        Discovers:
+        - Active pods via ``kubectl get pods``
+        - K8s manifest files from workspace ``k8s/`` directory
+        - Cluster info via ``kubectl cluster-info``
+        - Namespaces, deployments, services, ingresses
+        - Resource quotas and events
+
+        Returns a dict with sections:
+            - kubectl_available: bool
+            - cluster_info: cluster connection details
+            - pods: list of pod dicts with status/resources
+            - deployments: list of deployment dicts
+            - services: list of K8s service dicts
+            - ingresses: list of ingress dicts
+            - namespaces: list of namespace names
+            - manifests: parsed k8s/ directory manifests
+            - events: recent cluster events
+            - error: optional error string
+        """
+        import json as _json
+        import os
+        import re
+        import subprocess
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        result: Dict[str, Any] = {
+            "kubectl_available": False,
+            "cluster_info": {},
+            "pods": [],
+            "deployments": [],
+            "services": [],
+            "ingresses": [],
+            "namespaces": [],
+            "manifests": [],
+            "events": [],
+            "error": "",
+        }
+
+        def _run_kubectl(*args: str, timeout: int = 10) -> tuple:
+            """Run a kubectl command and return (success, stdout, stderr)."""
+            try:
+                proc = subprocess.run(
+                    ["kubectl", *args],
+                    capture_output=True, text=True, timeout=timeout,
+                )
+                return proc.returncode == 0, proc.stdout.strip(), proc.stderr.strip()
+            except FileNotFoundError:
+                return False, "", "kubectl CLI not found"
+            except subprocess.TimeoutExpired:
+                return False, "", "Command timed out"
+            except Exception as e:
+                return False, "", str(e)
+
+        # ── Check kubectl availability ──
+        ok, ver_out, ver_err = _run_kubectl("version", "--client", "--output=json")
+        if not ok:
+            result["error"] = ver_err or "kubectl is not available"
+            # Still scan manifests even without kubectl
+        else:
+            result["kubectl_available"] = True
+            try:
+                ver_data = _json.loads(ver_out)
+                client_ver = ver_data.get("clientVersion", {})
+                result["cluster_info"]["client_version"] = client_ver.get("gitVersion", "")
+                result["cluster_info"]["platform"] = client_ver.get("platform", "")
+            except _json.JSONDecodeError:
+                result["cluster_info"]["client_version"] = ver_out
+
+        # ── Cluster connection check ──
+        if result["kubectl_available"]:
+            ok, cluster_out, cluster_err = _run_kubectl(
+                "cluster-info", "--request-timeout=5s"
+            )
+            if ok:
+                result["cluster_info"]["connected"] = True
+                result["cluster_info"]["summary"] = cluster_out[:500]
+            else:
+                result["cluster_info"]["connected"] = False
+                result["cluster_info"]["connection_error"] = cluster_err[:200]
+
+            # ── Namespaces ──
+            ok, ns_out, _ = _run_kubectl(
+                "get", "namespaces", "-o",
+                "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
+            )
+            if ok and ns_out:
+                result["namespaces"] = [
+                    n.strip() for n in ns_out.splitlines() if n.strip()
+                ]
+
+            # ── Pods (all namespaces) ──
+            ok, pods_out, _ = _run_kubectl(
+                "get", "pods", "--all-namespaces", "-o", "json",
+                "--request-timeout=8s",
+            )
+            if ok and pods_out:
+                try:
+                    pods_data = _json.loads(pods_out)
+                    for item in pods_data.get("items", []):
+                        meta = item.get("metadata", {})
+                        spec = item.get("spec", {})
+                        status = item.get("status", {})
+
+                        # Container statuses
+                        container_statuses = []
+                        for cs in status.get("containerStatuses", []):
+                            state_info = {}
+                            for st_key in ("running", "waiting", "terminated"):
+                                if st_key in cs.get("state", {}):
+                                    state_info = {"state": st_key,
+                                                  **cs["state"][st_key]}
+                                    break
+                            container_statuses.append({
+                                "name": cs.get("name", ""),
+                                "ready": cs.get("ready", False),
+                                "restart_count": cs.get("restartCount", 0),
+                                "image": cs.get("image", ""),
+                                "state_info": state_info,
+                            })
+
+                        # Resource requests/limits
+                        resources = {}
+                        containers = spec.get("containers", [])
+                        if containers:
+                            res = containers[0].get("resources", {})
+                            resources = {
+                                "requests": res.get("requests", {}),
+                                "limits": res.get("limits", {}),
+                            }
+
+                        phase = status.get("phase", "Unknown")
+                        pod_dict = {
+                            "name": meta.get("name", ""),
+                            "namespace": meta.get("namespace", ""),
+                            "node": spec.get("nodeName", ""),
+                            "phase": phase,
+                            "phase_class": phase.lower(),
+                            "ip": status.get("podIP", ""),
+                            "host_ip": status.get("hostIP", ""),
+                            "start_time": status.get("startTime", ""),
+                            "containers": container_statuses,
+                            "container_count": len(containers),
+                            "ready_count": sum(
+                                1 for cs in container_statuses if cs.get("ready")
+                            ),
+                            "restart_count": sum(
+                                cs.get("restart_count", 0)
+                                for cs in container_statuses
+                            ),
+                            "resources": resources,
+                            "labels": meta.get("labels", {}),
+                            "age": "",
+                        }
+
+                        # Calculate age
+                        start_time = status.get("startTime")
+                        if start_time:
+                            try:
+                                st = datetime.fromisoformat(
+                                    start_time.replace("Z", "+00:00")
+                                )
+                                delta = datetime.now(tz=timezone.utc) - st
+                                pod_dict["age"] = self._format_uptime(
+                                    delta.total_seconds()
+                                )
+                            except Exception:
+                                pass
+
+                        result["pods"].append(pod_dict)
+                except _json.JSONDecodeError:
+                    pass
+
+            # ── Deployments ──
+            ok, dep_out, _ = _run_kubectl(
+                "get", "deployments", "--all-namespaces", "-o", "json",
+                "--request-timeout=8s",
+            )
+            if ok and dep_out:
+                try:
+                    dep_data = _json.loads(dep_out)
+                    for item in dep_data.get("items", []):
+                        meta = item.get("metadata", {})
+                        spec = item.get("spec", {})
+                        status = item.get("status", {})
+                        result["deployments"].append({
+                            "name": meta.get("name", ""),
+                            "namespace": meta.get("namespace", ""),
+                            "replicas": spec.get("replicas", 0),
+                            "ready_replicas": status.get("readyReplicas", 0),
+                            "available_replicas": status.get("availableReplicas", 0),
+                            "updated_replicas": status.get("updatedReplicas", 0),
+                            "strategy": spec.get("strategy", {}).get("type", ""),
+                            "image": "",
+                            "labels": meta.get("labels", {}),
+                        })
+                        # Extract image from first container
+                        containers = (
+                            spec.get("template", {})
+                            .get("spec", {})
+                            .get("containers", [])
+                        )
+                        if containers:
+                            result["deployments"][-1]["image"] = containers[0].get(
+                                "image", ""
+                            )
+                except _json.JSONDecodeError:
+                    pass
+
+            # ── Services ──
+            ok, svc_out, _ = _run_kubectl(
+                "get", "services", "--all-namespaces", "-o", "json",
+                "--request-timeout=8s",
+            )
+            if ok and svc_out:
+                try:
+                    svc_data = _json.loads(svc_out)
+                    for item in svc_data.get("items", []):
+                        meta = item.get("metadata", {})
+                        spec = item.get("spec", {})
+                        ports = []
+                        for p in spec.get("ports", []):
+                            ports.append({
+                                "port": p.get("port"),
+                                "target_port": p.get("targetPort"),
+                                "protocol": p.get("protocol", "TCP"),
+                                "name": p.get("name", ""),
+                            })
+                        result["services"].append({
+                            "name": meta.get("name", ""),
+                            "namespace": meta.get("namespace", ""),
+                            "type": spec.get("type", "ClusterIP"),
+                            "cluster_ip": spec.get("clusterIP", ""),
+                            "external_ip": ", ".join(
+                                spec.get("externalIPs", [])
+                            ) or "—",
+                            "ports": ports,
+                        })
+                except _json.JSONDecodeError:
+                    pass
+
+            # ── Ingresses ──
+            ok, ing_out, _ = _run_kubectl(
+                "get", "ingresses", "--all-namespaces", "-o", "json",
+                "--request-timeout=8s",
+            )
+            if ok and ing_out:
+                try:
+                    ing_data = _json.loads(ing_out)
+                    for item in ing_data.get("items", []):
+                        meta = item.get("metadata", {})
+                        spec = item.get("spec", {})
+                        hosts = []
+                        for rule in spec.get("rules", []):
+                            hosts.append(rule.get("host", ""))
+                        result["ingresses"].append({
+                            "name": meta.get("name", ""),
+                            "namespace": meta.get("namespace", ""),
+                            "hosts": hosts,
+                            "tls": bool(spec.get("tls")),
+                            "class_name": spec.get("ingressClassName", ""),
+                        })
+                except _json.JSONDecodeError:
+                    pass
+
+            # ── Recent events (last 20) ──
+            ok, evt_out, _ = _run_kubectl(
+                "get", "events", "--all-namespaces",
+                "--sort-by=.metadata.creationTimestamp",
+                "-o", "json", "--request-timeout=8s",
+            )
+            if ok and evt_out:
+                try:
+                    evt_data = _json.loads(evt_out)
+                    items = evt_data.get("items", [])[-20:]
+                    for item in items:
+                        meta = item.get("metadata", {})
+                        result["events"].append({
+                            "type": item.get("type", "Normal"),
+                            "reason": item.get("reason", ""),
+                            "message": (item.get("message", "") or "")[:200],
+                            "namespace": meta.get("namespace", ""),
+                            "object": (
+                                item.get("involvedObject", {}).get("name", "")
+                            ),
+                            "timestamp": item.get("lastTimestamp")
+                            or meta.get("creationTimestamp", ""),
+                        })
+                except _json.JSONDecodeError:
+                    pass
+
+        # ── K8s manifest file analysis (always, even without kubectl) ──
+        k8s_dir = self._find_workspace_path("k8s")
+        if k8s_dir and k8s_dir.is_dir():
+            for fpath in sorted(k8s_dir.iterdir()):
+                if fpath.suffix in (".yaml", ".yml") and fpath.is_file():
+                    try:
+                        content = fpath.read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                        # Extract kind from YAML
+                        kind_match = re.search(
+                            r'^kind:\s*(\S+)', content, re.MULTILINE,
+                        )
+                        name_match = re.search(
+                            r'^\s+name:\s*(\S+)', content, re.MULTILINE,
+                        )
+                        result["manifests"].append({
+                            "filename": fpath.name,
+                            "kind": kind_match.group(1) if kind_match else "Unknown",
+                            "name": name_match.group(1) if name_match else "",
+                            "size": f"{fpath.stat().st_size / 1024:.1f} KB",
+                            "content": content,
+                        })
+                    except Exception:
+                        result["manifests"].append({
+                            "filename": fpath.name,
+                            "kind": "Unknown",
+                            "name": "",
+                            "size": "?",
+                            "content": "",
+                        })
+
         return result
 
     def get_workspace_data(self) -> Dict[str, Any]:
