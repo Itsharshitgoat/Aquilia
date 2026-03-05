@@ -132,7 +132,7 @@ class AquiliaGroup(click.Group):
         "Admin": ["admin"],
         "Inspect": ["inspect", "manifest", "analytics"],
         "Subsystems": ["ws", "cache", "mail", "i18n"],
-        "MLOps": ["pack", "model", "deploy", "observe", "export", "plugin", "lineage", "experiment"],
+        "MLOps": ["pack", "model", "mlops-deploy", "observe", "export", "plugin", "lineage", "experiment"],
         "Deploy": ["deploy-gen", "artifact"],
         "Migration": ["migrate"],
     }
@@ -1004,13 +1004,17 @@ def freeze(ctx, output: Optional[str], sign: bool):
 @click.option('--compress', type=click.Choice(['none', 'lz4', 'zstd']), default=None, help='Compression')
 @click.option('--check-only', is_flag=True, help='Only run checks, don\'t emit artifacts')
 @click.option('--skip-checks', is_flag=True, help='Skip static checks (faster)')
+@click.option('--force', is_flag=True, help='Bypass incremental build cache')
 @click.pass_context
-def build(ctx, mode: str, output: str, compress: Optional[str], check_only: bool, skip_checks: bool):
+def build(ctx, mode: str, output: str, compress: Optional[str], check_only: bool, skip_checks: bool, force: bool):
     """
     Build the workspace (compile, check, bundle).
 
     Compiles, validates, and bundles the entire workspace into optimized
     Crous binary artifacts. If any check fails, the build is aborted.
+
+    Uses incremental caching: if source files haven't changed since the
+    last build, phases are skipped automatically. Use --force to bypass.
 
     Examples:
       aq build
@@ -1018,6 +1022,7 @@ def build(ctx, mode: str, output: str, compress: Optional[str], check_only: bool
       aq build --mode=prod --compress=lz4
       aq build --check-only
       aq build --output=dist/
+      aq build --force
     """
     from aquilia.build import AquiliaBuildPipeline
 
@@ -1033,6 +1038,8 @@ def build(ctx, mode: str, output: str, compress: Optional[str], check_only: bool
             kv("Output", output)
             if check_only:
                 kv("Check Only", "yes")
+            if force:
+                kv("Force", "yes (bypassing cache)")
             click.echo()
 
         result = AquiliaBuildPipeline.build(
@@ -1042,6 +1049,7 @@ def build(ctx, mode: str, output: str, compress: Optional[str], check_only: bool
             compression=compression,
             check_only=check_only,
             output_dir=output,
+            force=force,
         )
 
         if not ctx.obj['quiet']:

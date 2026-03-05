@@ -1,0 +1,52 @@
+# ──────────────────────────────────────────────────────────────
+# Aquilia Maintenance CronJob
+# Runs periodic tasks: artifact cleanup, session pruning, etc.
+# ──────────────────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: myapp-maintenance
+  namespace: myapp
+  labels:
+    app.kubernetes.io/name: myapp
+    app.kubernetes.io/component: maintenance
+spec:
+  schedule: "0 3 * * *"  # Daily at 3 AM
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: myapp
+            app.kubernetes.io/component: maintenance
+        spec:
+          serviceAccountName: myapp-sa
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+          containers:
+            - name: maintenance
+              image: ghcr.io/YOUR_ORG/myapp:latest
+              command:
+                - python
+                - -m
+                - aquilia.cli
+                - doctor
+                - --cleanup
+              envFrom:
+                - configMapRef:
+                    name: myapp-config
+                - secretRef:
+                    name: myapp-secrets
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"

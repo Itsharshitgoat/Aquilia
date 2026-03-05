@@ -1717,24 +1717,24 @@ class TestContainersPage:
     """Tests for the Containers admin page data and rendering."""
 
     def test_default_modules_include_containers(self):
-        """containers module should be enabled by default."""
+        """containers module should be disabled by default."""
         config = AdminConfig.from_dict({})
-        assert config.is_module_enabled("containers") is True
-
-    def test_default_modules_include_pods(self):
-        """pods module should be enabled by default."""
-        config = AdminConfig.from_dict({})
-        assert config.is_module_enabled("pods") is True
-
-    def test_containers_module_can_be_disabled(self):
-        """containers module should be disablable via config."""
-        config = AdminConfig.from_dict({"modules": {"containers": False}})
         assert config.is_module_enabled("containers") is False
 
-    def test_pods_module_can_be_disabled(self):
-        """pods module should be disablable via config."""
-        config = AdminConfig.from_dict({"modules": {"pods": False}})
+    def test_default_modules_include_pods(self):
+        """pods module should be disabled by default."""
+        config = AdminConfig.from_dict({})
         assert config.is_module_enabled("pods") is False
+
+    def test_containers_module_can_be_enabled(self):
+        """containers module should be enableable via config."""
+        config = AdminConfig.from_dict({"modules": {"containers": True}})
+        assert config.is_module_enabled("containers") is True
+
+    def test_pods_module_can_be_enabled(self):
+        """pods module should be enableable via config."""
+        config = AdminConfig.from_dict({"modules": {"pods": True}})
+        assert config.is_module_enabled("pods") is True
 
     def test_get_containers_data_returns_dict(self):
         """get_containers_data should return a structured dict."""
@@ -1809,37 +1809,37 @@ class TestContainersPage:
             elif cmd[1] == "ps":
                 return MagicMock(
                     returncode=0,
-                    stdout='{"id":"abc123","name":"myapp","image":"python:3.12",'
-                           '"status":"Up 2 hours","state":"running","ports":"8000->8000/tcp",'
-                           '"created":"2024-01-15","size":"100MB",'
-                           '"command":"python","labels":""}',
+                    stdout='{"ID":"abc123","Names":"myapp","Image":"python:3.12",'
+                           '"Status":"Up 2 hours","State":"running","Ports":"8000->8000/tcp",'
+                           '"CreatedAt":"2024-01-15","Size":"100MB",'
+                           '"Command":"python","Labels":""}',
                     stderr="",
                 )
             elif cmd[1] == "stats":
                 return MagicMock(
                     returncode=0,
-                    stdout='{"id":"abc123","name":"myapp","cpu":"2.5%",'
-                           '"memory":"128MiB / 16GiB","mem_perc":"0.78%",'
-                           '"net_io":"1.2kB / 500B","block_io":"0B / 0B","pids":"5"}',
+                    stdout='{"ID":"abc123","Name":"myapp","CPUPerc":"2.5%",'
+                           '"MemUsage":"128MiB / 16GiB","MemPerc":"0.78%",'
+                           '"NetIO":"1.2kB / 500B","BlockIO":"0B / 0B","PIDs":"5"}',
                     stderr="",
                 )
             elif cmd[1] == "images":
                 return MagicMock(
                     returncode=0,
-                    stdout='{"id":"sha256:abc","repository":"python","tag":"3.12",'
-                           '"size":"1.2GB","created":"2024-01-10"}',
+                    stdout='{"ID":"sha256:abc","Repository":"python","Tag":"3.12",'
+                           '"Size":"1.2GB","CreatedAt":"2024-01-10"}',
                     stderr="",
                 )
             elif cmd[1] == "volume":
                 return MagicMock(
                     returncode=0,
-                    stdout='{"name":"myapp_data","driver":"local","mountpoint":"/var/lib/docker/volumes/myapp_data"}',
+                    stdout='{"Name":"myapp_data","Driver":"local","Mountpoint":"/var/lib/docker/volumes/myapp_data"}',
                     stderr="",
                 )
             elif cmd[1] == "network":
                 return MagicMock(
                     returncode=0,
-                    stdout='{"id":"net123","name":"myapp_default","driver":"bridge","scope":"local"}',
+                    stdout='{"ID":"net123","Name":"myapp_default","Driver":"bridge","Scope":"local"}',
                     stderr="",
                 )
             return MagicMock(returncode=1, stdout="", stderr="unknown")
@@ -2223,18 +2223,18 @@ class TestPodsPage:
             elif cmd[1] == "ps":
                 return MagicMock(
                     returncode=0,
-                    stdout='{"id":"abc123def456","name":"web","image":"nginx",'
-                           '"status":"Up","state":"running","ports":"80/tcp",'
-                           '"created":"2024-01-15","size":"50MB",'
-                           '"command":"nginx","labels":""}',
+                    stdout='{"ID":"abc123def456","Names":"web","Image":"nginx",'
+                           '"Status":"Up","State":"running","Ports":"80/tcp",'
+                           '"CreatedAt":"2024-01-15","Size":"50MB",'
+                           '"Command":"nginx","Labels":""}',
                     stderr="",
                 )
             elif cmd[1] == "stats":
                 return MagicMock(
                     returncode=0,
-                    stdout='{"id":"abc123def456","name":"web","cpu":"1.5%",'
-                           '"memory":"64MiB / 8GiB","mem_perc":"0.8%",'
-                           '"net_io":"500B / 300B","block_io":"0B / 0B","pids":"3"}',
+                    stdout='{"ID":"abc123def456","Name":"web","CPUPerc":"1.5%",'
+                           '"MemUsage":"64MiB / 8GiB","MemPerc":"0.8%",'
+                           '"NetIO":"500B / 300B","BlockIO":"0B / 0B","PIDs":"3"}',
                     stderr="",
                 )
             return MagicMock(returncode=0, stdout="", stderr="")

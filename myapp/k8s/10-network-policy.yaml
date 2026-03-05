@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: myapp-netpol
+  namespace: myapp
+  labels:
+    app.kubernetes.io/name: myapp
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: myapp
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 8000
+          protocol: TCP
+  egress:
+      # Allow DNS
+      - ports:
+          - port: 53
+            protocol: UDP
+          - port: 53
+            protocol: TCP

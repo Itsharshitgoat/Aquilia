@@ -353,6 +353,18 @@ class AdminController(Controller):
                 "profile",
                 "Your admin profile, avatar, and password management.",
             ),
+            "Containers": (
+                "Integration.AdminModules().enable_containers()",
+                "enable_containers=True",
+                "container",
+                "Docker containers, images, volumes, networks, and Compose services.",
+            ),
+            "Pods": (
+                "Integration.AdminModules().enable_pods()",
+                "enable_pods=True",
+                "cloud",
+                "Kubernetes pods, deployments, services, and cluster management.",
+            ),
         }
 
         hint = _config_hints.get(module, (
@@ -381,6 +393,7 @@ class AdminController(Controller):
     async def dashboard(self, request, ctx: RequestCtx) -> Response:
         """Admin dashboard -- model overview with stats."""
         identity, denied = _require_identity(ctx)
+        # print(identity)
         if denied:
             return denied
 
@@ -389,11 +402,48 @@ class AdminController(Controller):
         app_list = self.site.get_app_list(identity)
         stats = await self.site.get_dashboard_stats()
 
+        # Gather infrastructure summaries for dashboard widgets
+        containers_summary = {}
+        pods_summary = {}
+        if self.site.admin_config.is_module_enabled("containers"):
+            try:
+                cd = self.site.get_containers_data()
+                containers_summary = {
+                    "available": cd.get("docker_available", False),
+                    "total": len(cd.get("containers", [])),
+                    "running": sum(1 for c in cd.get("containers", []) if c.get("state", "").lower() == "running"),
+                    "stopped": sum(1 for c in cd.get("containers", []) if c.get("state", "").lower() != "running"),
+                    "images": len(cd.get("images", [])),
+                    "volumes": len(cd.get("volumes", [])),
+                    "networks": len(cd.get("networks", [])),
+                    "version": cd.get("docker_version", ""),
+                    "error": cd.get("error", ""),
+                }
+            except Exception:
+                containers_summary = {"available": False, "error": "Failed to fetch"}
+
+        if self.site.admin_config.is_module_enabled("pods"):
+            try:
+                pd = self.site.get_pods_data()
+                pods_summary = {
+                    "available": pd.get("kubectl_available", False),
+                    "total_pods": len(pd.get("pods", [])),
+                    "running_pods": sum(1 for p in pd.get("pods", []) if p.get("status", "").lower() == "running"),
+                    "deployments": len(pd.get("deployments", [])),
+                    "services": len(pd.get("services", [])),
+                    "namespaces": len(pd.get("namespaces", [])),
+                    "error": pd.get("error", ""),
+                }
+            except Exception:
+                pods_summary = {"available": False, "error": "Failed to fetch"}
+
         html = render_dashboard(
             app_list=app_list,
             stats=stats,
             identity_name=_get_identity_name(identity),
-                identity_avatar=_get_identity_avatar(identity),
+            identity_avatar=_get_identity_avatar(identity),
+            containers_summary=containers_summary,
+            pods_summary=pods_summary,
         )
         return _html_response(html)
 
@@ -511,7 +561,7 @@ class AdminController(Controller):
     _SYSTEM_PAGES = frozenset({
         "login", "logout", "orm", "build", "migrations",
         "config", "workspace", "permissions", "audit", "monitoring",
-        "admin-users", "profile",
+        "admin-users", "profile", "containers", "pods",
     })
 
     # ── List View ────────────────────────────────────────────────────

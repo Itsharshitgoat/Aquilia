@@ -55,6 +55,7 @@ class AdminConfig:
         "migrations": True, "config": True, "workspace": True,
         "permissions": True, "monitoring": False, "admin_users": True,
         "profile": True, "audit": False,
+        "containers": False, "pods": False,
     })
 
     # Audit settings (disabled by default -- opt in)
@@ -72,10 +73,51 @@ class AdminConfig:
     }))
     monitoring_refresh_interval: int = 30
 
+    # Containers (Docker) settings
+    containers_config: Dict[str, Any] = field(default_factory=lambda: {
+        "docker_host": None,
+        "allowed_actions": [
+            "start", "stop", "restart", "pause", "unpause",
+            "kill", "rm", "logs", "inspect", "exec", "export",
+        ],
+        "log_tail": 200,
+        "log_since": "",
+        "refresh_interval": 15,
+        "compose_files": [],
+        "compose_project_dir": None,
+        "show_system_containers": False,
+        "capabilities": {
+            "exec": True, "prune": True, "build": True,
+            "export": True, "image_actions": True,
+            "volume_actions": True, "network_actions": True,
+        },
+    })
+
+    # Pods (Kubernetes) settings
+    pods_config: Dict[str, Any] = field(default_factory=lambda: {
+        "kubeconfig": None,
+        "namespace": "default",
+        "contexts": [],
+        "resources": [
+            "pods", "deployments", "services", "ingresses",
+            "configmaps", "secrets", "namespaces", "events",
+            "daemonsets", "statefulsets", "jobs", "cronjobs",
+            "persistentvolumeclaims", "nodes",
+        ],
+        "manifest_dirs": ["k8s"],
+        "manifest_patterns": ["*.yaml", "*.yml"],
+        "refresh_interval": 15,
+        "log_tail": 200,
+        "capabilities": {
+            "logs": True, "exec": True, "delete": True,
+            "scale": True, "restart": True, "apply": True,
+        },
+    })
+
     # Sidebar section visibility
     sidebar_sections: Dict[str, bool] = field(default_factory=lambda: {
         "overview": True, "data": True, "system": True,
-        "security": True, "models": True,
+        "infrastructure": True, "security": True, "models": True,
     })
 
     # UI
@@ -120,6 +162,52 @@ class AdminConfig:
         """Check if a sidebar section is visible."""
         return self.sidebar_sections.get(section, True)
 
+    # ── Containers (Docker) helpers ──────────────────────────────────
+
+    def get_docker_host(self) -> Optional[str]:
+        """Return the configured Docker host, or None for auto-detect."""
+        return self.containers_config.get("docker_host")
+
+    def get_container_refresh_interval(self) -> int:
+        """Return the auto-refresh interval for the containers page."""
+        return self.containers_config.get("refresh_interval", 15)
+
+    def get_container_log_tail(self) -> int:
+        """Return the default log tail lines for container logs."""
+        return self.containers_config.get("log_tail", 200)
+
+    def is_container_action_allowed(self, action: str) -> bool:
+        """Check if a container lifecycle action is permitted."""
+        return action in self.containers_config.get("allowed_actions", [])
+
+    def is_container_capability_enabled(self, capability: str) -> bool:
+        """Check if a container capability (exec/prune/build/export/etc.) is enabled."""
+        caps = self.containers_config.get("capabilities", {})
+        return caps.get(capability, True)
+
+    # ── Pods (Kubernetes) helpers ────────────────────────────────────
+
+    def get_kube_namespace(self) -> str:
+        """Return the configured Kubernetes namespace."""
+        return self.pods_config.get("namespace", "default")
+
+    def get_pod_refresh_interval(self) -> int:
+        """Return the auto-refresh interval for the pods page."""
+        return self.pods_config.get("refresh_interval", 15)
+
+    def get_pod_log_tail(self) -> int:
+        """Return the default log tail lines for pod logs."""
+        return self.pods_config.get("log_tail", 200)
+
+    def is_pod_resource_enabled(self, resource: str) -> bool:
+        """Check if a K8s resource type is enabled for display."""
+        return resource in self.pods_config.get("resources", [])
+
+    def is_pod_capability_enabled(self, capability: str) -> bool:
+        """Check if a pod capability (logs/exec/delete/scale/restart/apply) is enabled."""
+        caps = self.pods_config.get("capabilities", {})
+        return caps.get(capability, True)
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialise the config for template consumption."""
         return {
@@ -137,6 +225,8 @@ class AdminConfig:
                 "metrics": sorted(self.monitoring_metrics),
                 "refresh_interval": self.monitoring_refresh_interval,
             },
+            "containers": dict(self.containers_config),
+            "pods": dict(self.pods_config),
             "sidebar_sections": dict(self.sidebar_sections),
             "theme": self.theme,
             "list_per_page": self.list_per_page,
@@ -148,21 +238,77 @@ class AdminConfig:
         modules_raw = raw.get("modules", {})
         audit_raw = raw.get("audit_config", {})
         monitoring_raw = raw.get("monitoring_config", {})
+        containers_raw = raw.get("containers_config", {})
+        pods_raw = raw.get("pods_config", {})
         sidebar_raw = raw.get("sidebar_sections", {})
 
-        # Defaults for modules (monitoring & audit disabled by default)
+        # Defaults for modules (monitoring, audit, containers, pods disabled by default)
         default_modules = {
             "dashboard": True, "orm": True, "build": True,
             "migrations": True, "config": True, "workspace": True,
             "permissions": True, "monitoring": False, "admin_users": True,
             "profile": True, "audit": False,
-            "containers": True, "pods": True,
+            "containers": False, "pods": False,
         }
         modules = {**default_modules, **modules_raw}
 
         # If enable_audit is explicitly provided at top level, honour it
         if "enable_audit" in raw:
             modules["audit"] = bool(raw["enable_audit"])
+
+        # ── Containers config defaults ──
+        _default_containers = {
+            "docker_host": None,
+            "allowed_actions": [
+                "start", "stop", "restart", "pause", "unpause",
+                "kill", "rm", "logs", "inspect", "exec", "export",
+            ],
+            "log_tail": 200,
+            "log_since": "",
+            "refresh_interval": 15,
+            "compose_files": [],
+            "compose_project_dir": None,
+            "show_system_containers": False,
+            "capabilities": {
+                "exec": True, "prune": True, "build": True,
+                "export": True, "image_actions": True,
+                "volume_actions": True, "network_actions": True,
+            },
+        }
+        # Deep merge capabilities
+        merged_containers = {**_default_containers, **containers_raw}
+        if "capabilities" in containers_raw and isinstance(containers_raw["capabilities"], dict):
+            merged_containers["capabilities"] = {
+                **_default_containers["capabilities"],
+                **containers_raw["capabilities"],
+            }
+
+        # ── Pods config defaults ──
+        _default_pods = {
+            "kubeconfig": None,
+            "namespace": "default",
+            "contexts": [],
+            "resources": [
+                "pods", "deployments", "services", "ingresses",
+                "configmaps", "secrets", "namespaces", "events",
+                "daemonsets", "statefulsets", "jobs", "cronjobs",
+                "persistentvolumeclaims", "nodes",
+            ],
+            "manifest_dirs": ["k8s"],
+            "manifest_patterns": ["*.yaml", "*.yml"],
+            "refresh_interval": 15,
+            "log_tail": 200,
+            "capabilities": {
+                "logs": True, "exec": True, "delete": True,
+                "scale": True, "restart": True, "apply": True,
+            },
+        }
+        merged_pods = {**_default_pods, **pods_raw}
+        if "capabilities" in pods_raw and isinstance(pods_raw["capabilities"], dict):
+            merged_pods["capabilities"] = {
+                **_default_pods["capabilities"],
+                **pods_raw["capabilities"],
+            }
 
         return cls(
             modules=modules,
@@ -177,10 +323,13 @@ class AdminConfig:
                 "cpu", "memory", "disk", "network", "process", "python", "system", "health_checks",
             ])),
             monitoring_refresh_interval=monitoring_raw.get("refresh_interval", 30),
+            containers_config=merged_containers,
+            pods_config=merged_pods,
             sidebar_sections={
                 "overview": sidebar_raw.get("overview", True),
                 "data": sidebar_raw.get("data", True),
                 "system": sidebar_raw.get("system", True),
+                "infrastructure": sidebar_raw.get("infrastructure", True),
                 "security": sidebar_raw.get("security", True),
                 "models": sidebar_raw.get("models", True),
             },

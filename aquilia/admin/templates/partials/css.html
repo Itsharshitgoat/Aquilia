@@ -1190,3 +1190,99 @@ body.sidebar-open { overflow: hidden; }
   background: var(--accent-subtle); padding: 2px 8px; border-radius: var(--radius-full);
 }
 
+/* ═══ GLOBAL SPINNER / PAGE LOADER ══════════════════════════ */
+/* Top progress bar */
+#aq-progress-bar {
+  position: fixed; top: 0; left: 0; width: 0; height: 3px;
+  background: linear-gradient(90deg, var(--accent), #34d399, var(--accent));
+  background-size: 200% 100%;
+  z-index: 99999;
+  transition: width 0.25s ease, opacity 0.3s ease;
+  opacity: 0;
+  box-shadow: 0 0 10px rgba(34,197,94,0.6);
+  pointer-events: none;
+}
+#aq-progress-bar.running {
+  opacity: 1;
+  animation: aq-bar-slide 1.4s linear infinite;
+}
+@keyframes aq-bar-slide {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Full-screen overlay spinner */
+#aq-spinner-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.35);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: 99998;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+#aq-spinner-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.aq-spinner-box {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 28px 36px;
+  display: flex; flex-direction: column;
+  align-items: center; gap: 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  min-width: 160px;
+  animation: scaleIn 0.2s ease-out;
+}
+.aq-spinner-ring {
+  width: 48px; height: 48px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: aq-spin 0.75s linear infinite;
+}
+@keyframes aq-spin {
+  to { transform: rotate(360deg); }
+}
+.aq-spinner-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+}
+
+/* Sidebar navigation spinner */
+.sidebar-nav-spinner {
+  display: inline-block;
+  width: 14px; height: 14px;
+  margin-left: auto;
+  border: 2px solid rgba(255,255,255,.15);
+  border-top-color: var(--accent, #6c63ff);
+  border-radius: 50%;
+  animation: aq-spin .65s linear infinite;
+  flex-shrink: 0;
+}
+
+/* Inline button spinner */
+.aq-btn-loading {
+  position: relative !important;
+  pointer-events: none !important;
+  opacity: 0.75 !important;
+}
+.aq-btn-loading::after {
+  content: '';
+  position: absolute;
+  right: 10px; top: 50%;
+  width: 13px; height: 13px;
+  margin-top: -6.5px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: aq-spin 0.7s linear infinite;
+  opacity: 0.8;
+}
+

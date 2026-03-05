@@ -140,6 +140,7 @@ class TestBuildSystemImports:
             BuildConfig,
             BuildPhase,
             BuildError,
+            BuildManifest,
             StaticChecker,
             CheckResult,
             CheckError,
@@ -157,7 +158,7 @@ class TestBuildSystemImports:
         from aquilia import build
         expected = [
             "AquiliaBuildPipeline", "BuildResult", "BuildConfig",
-            "BuildPhase", "BuildError",
+            "BuildPhase", "BuildError", "BuildManifest",
             "StaticChecker", "CheckResult", "CheckError",
             "CrousBundler", "BundleManifest",
             "BuildResolver", "ResolvedBuild",
@@ -451,7 +452,6 @@ class TestBuildResult:
         assert "static_check" in phase_values
         assert "compilation" in phase_values
         assert "bundling" in phase_values
-        assert "fingerprint" in phase_values
         assert "done" in phase_values
 
 
@@ -927,15 +927,13 @@ class TestDeploymentGenerator:
         assert ".aquilia" not in source, \
             "Production Dockerfile still references .aquilia directory"
 
-    def test_dockerfile_uses_gunicorn(self):
-        """Production Dockerfile CMD should use gunicorn."""
+    def test_dockerfile_uses_uvicorn(self):
+        """Production Dockerfile CMD should use uvicorn."""
         import inspect
         from aquilia.cli.generators.deployment import DockerfileGenerator
         source = inspect.getsource(DockerfileGenerator.generate_dockerfile)
-        assert "gunicorn" in source, \
-            "Production Dockerfile should use gunicorn in CMD"
-        assert "UvicornWorker" in source, \
-            "Production Dockerfile should use UvicornWorker"
+        assert "uvicorn" in source, \
+            "Production Dockerfile should use uvicorn in CMD"
 
     def test_dockerignore_no_aquilia_dir(self):
         """Dockerignore should not reference .aquilia/."""

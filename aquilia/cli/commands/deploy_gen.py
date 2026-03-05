@@ -1,18 +1,24 @@
 """
 Deploy CLI commands -- ``aq deploy`` group.
 
-Production-ready deployment file generators for Aquilia workspaces.
-Each sub-command generates a specific deployment artefact:
+Production-ready deployment file generators **and executor** for Aquilia
+workspaces.  Each sub-command generates a specific deployment artefact:
 
-    aq deploy dockerfile   -- Dockerfile (production / dev / mlops)
-    aq deploy compose      -- docker-compose.yml
-    aq deploy kubernetes   -- Full Kubernetes manifest suite
-    aq deploy nginx        -- Nginx reverse-proxy configuration
-    aq deploy ci           -- CI/CD pipeline (GitHub Actions / GitLab CI)
-    aq deploy monitoring   -- Prometheus + Grafana provisioning
-    aq deploy env          -- .env.example template
-    aq deploy makefile     -- Makefile with dev/build/deploy targets
-    aq deploy all          -- Generate everything at once
+    aq deploy                -- Interactive wizard (generate + execute)
+    aq deploy dockerfile     -- Dockerfile (production / dev / mlops)
+    aq deploy compose        -- docker-compose.yml
+    aq deploy kubernetes     -- Full Kubernetes manifest suite
+    aq deploy nginx          -- Nginx reverse-proxy configuration
+    aq deploy ci             -- CI/CD pipeline (GitHub Actions / GitLab CI)
+    aq deploy monitoring     -- Prometheus + Grafana provisioning
+    aq deploy env            -- .env.example template
+    aq deploy makefile       -- Makefile with dev/build/deploy targets
+    aq deploy all            -- Generate everything at once
+
+Running ``aq deploy`` with **no** sub-command launches an interactive
+wizard (like ``aq init``) that lets you pick which artefacts to generate,
+configure options, and optionally **execute** the deployment (docker build,
+docker compose up, kubectl apply, monitoring stack, etc.).
 
 All generators introspect the workspace (workspace.py, config/, modules/,
 pyproject.toml) to detect enabled components (DB, cache, sessions, auth,
@@ -25,22 +31,41 @@ Flags:
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 import click
 
 from ..utils.colors import (
     success, error, info, warning, dim, bold,
-    section, kv, rule, step, panel, next_steps, table,
+    section, kv, rule, panel, next_steps, table,
     file_written, file_skipped, file_dry,
-    banner, _CHECK, _CROSS,
+    banner, _CHECK, _CROSS, _ARROW,
+)
+from ..utils.prompts import (
+    flow_header, flow_done, ask, select, multi_select, confirm, recap,
 )
 
 
 def _get_ctx(workspace_root: Path) -> dict:
-    """Introspect the workspace and return a context dict."""
+    """Introspect the workspace and return a context dict.
+
+    Prefers ``build/manifest.json`` (the build → deploy contract) when
+    available.  Falls back to ``WorkspaceIntrospector`` when no build
+    exists.
+    """
+    build_dir = workspace_root / "build"
+    try:
+        from aquilia.build.pipeline import BuildManifest
+        manifest = BuildManifest.load(build_dir)
+        return manifest.to_deploy_context(workspace_root)
+    except (FileNotFoundError, ValueError, Exception):
+        pass
+
     from ..generators.deployment import WorkspaceIntrospector
     return WorkspaceIntrospector(workspace_root).introspect()
 
@@ -84,25 +109,190 @@ def deploy_options(f):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Execution helpers -- run containers, compose, k8s, monitoring
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _has_command(name: str) -> bool:
+    """Check whether a CLI tool is available on PATH."""
+    return shutil.which(name) is not None
+
+
+def _run(cmd: List[str], *, label: str, cwd: Path, dry_run: bool = False) -> bool:
+    """Run a shell command with styled output.
+
+    Returns True on success, False on failure.
+    """
+    display = " ".join(cmd)
+    if dry_run:
+        dim(f"  [dry-run] {display}")
+        return True
+
+    info(f"  $ {display}")
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            capture_output=False,
+            text=True,
+        )
+        if result.returncode == 0:
+            success(f"  {_CHECK} {label}")
+            return True
+        else:
+            error(f"  {_CROSS} {label} failed (exit {result.returncode})")
+            return False
+    except FileNotFoundError:
+        error(f"  {_CROSS} Command not found: {cmd[0]}")
+        return False
+    except Exception as e:
+        error(f"  {_CROSS} {label} error: {e}")
+        return False
+
+
+def _exec_docker_build(workspace_root: Path, wctx: dict, *, dry_run: bool = False) -> bool:
+    """Build the Docker image."""
+    name = wctx["name"]
+    tag = f"{name}:latest"
+    dockerfile = workspace_root / "Dockerfile"
+    if not dockerfile.exists() and not dry_run:
+        warning(f"  Dockerfile not found -- skipping build")
+        return False
+    return _run(
+        ["docker", "build", "-t", tag, "."],
+        label=f"Docker image built: {tag}",
+        cwd=workspace_root,
+        dry_run=dry_run,
+    )
+
+
+def _exec_compose_up(workspace_root: Path, *, detach: bool = True,
+                      monitoring: bool = False, dry_run: bool = False) -> bool:
+    """Bring up docker compose stack."""
+    compose_file = workspace_root / "docker-compose.yml"
+    if not compose_file.exists() and not dry_run:
+        warning(f"  docker-compose.yml not found -- skipping")
+        return False
+    cmd = ["docker", "compose"]
+    if monitoring:
+        cmd.extend(["--profile", "monitoring"])
+    cmd.append("up")
+    if detach:
+        cmd.append("-d")
+    return _run(
+        cmd,
+        label="Docker Compose stack started",
+        cwd=workspace_root,
+        dry_run=dry_run,
+    )
+
+
+def _k8s_cluster_reachable() -> bool:
+    """Return True if the current kubectl context has a reachable API server.
+
+    Runs ``kubectl cluster-info --request-timeout=3s`` and checks the exit
+    code.  Suppresses all output so the check is silent.
+    """
+    try:
+        result = subprocess.run(
+            ["kubectl", "cluster-info", "--request-timeout=3s"],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _exec_k8s_apply(workspace_root: Path, *, namespace: str = "",
+                     dry_run: bool = False):
+    """Apply Kubernetes manifests via kustomize.
+
+    Returns:
+        True  -- manifests applied successfully
+        False -- kubectl exited non-zero (real failure)
+        None  -- skipped (no cluster reachable / missing k8s dir / no kubectl)
+    """
+    if dry_run:
+        dim("  [dry-run] kubectl apply -k k8s/")
+        return True
+
+    k8s_dir = workspace_root / "k8s"
+    if not k8s_dir.exists():
+        warning("  k8s/ directory not found -- skipping")
+        return None
+
+    if not _has_command("kubectl"):
+        warning("  kubectl not found on PATH -- skipping k8s apply")
+        return None
+
+    info("  Checking cluster connectivity...")
+    if not _k8s_cluster_reachable():
+        warning("  No Kubernetes cluster reachable (kubectl cluster-info failed).")
+        dim("  Manifests are ready in k8s/ -- apply when a cluster is available:")
+        dim("    kubectl apply -k k8s/")
+        if namespace:
+            dim(f"    kubectl apply -k k8s/ -n {namespace}")
+        return None          # not a hard error -- manifests were generated fine
+
+    cmd = ["kubectl", "apply", "-k", "k8s/", "--validate=false"]
+    if namespace:
+        cmd.extend(["-n", namespace])
+    return _run(
+        cmd,
+        label="Kubernetes manifests applied",
+        cwd=workspace_root,
+        dry_run=False,
+    )
+
+
+def _exec_compose_audit(workspace_root: Path, *, dry_run: bool = False) -> bool:
+    """Audit running compose services (ps + health)."""
+    compose_file = workspace_root / "docker-compose.yml"
+    if not compose_file.exists() and not dry_run:
+        return False
+    return _run(
+        ["docker", "compose", "ps", "--format", "table"],
+        label="Compose service audit",
+        cwd=workspace_root,
+        dry_run=dry_run,
+    )
+
+
+def _exec_monitoring_up(workspace_root: Path, *, dry_run: bool = False) -> bool:
+    """Start monitoring stack via compose profile."""
+    compose_file = workspace_root / "docker-compose.yml"
+    if not compose_file.exists() and not dry_run:
+        warning("  docker-compose.yml not found -- cannot start monitoring")
+        return False
+    return _run(
+        ["docker", "compose", "--profile", "monitoring", "up", "-d"],
+        label="Monitoring stack started (Prometheus + Grafana)",
+        cwd=workspace_root,
+        dry_run=dry_run,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Click group
 # ═══════════════════════════════════════════════════════════════════════════
 
-@click.group("deploy")
+@click.group("deploy", invoke_without_command=True)
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing files")
 @click.option("--dry-run", is_flag=True, help="Preview without writing files")
+@click.option("--yes", "-y", is_flag=True, help="Skip interactive prompts, use defaults")
 @click.pass_context
-def deploy_gen_group(ctx, force: bool, dry_run: bool):
-    """Generate production deployment files.
+def deploy_gen_group(ctx, force: bool, dry_run: bool, yes: bool):
+    """Generate & execute production deployment files.
 
-    Introspects your Aquilia workspace and generates Docker, Compose,
-    Kubernetes, Nginx, CI/CD, and monitoring configuration files
-    tailored to the components you use.
+    Run without a sub-command to launch the interactive deployment
+    wizard, or use a sub-command to generate a specific artefact.
 
-    Flags:
-      --force     Overwrite existing files
-      --dry-run   Preview what would be generated
+    Interactive wizard:
+      aq deploy              # Full interactive setup + execute
+      aq deploy -y           # Non-interactive, generate all + execute
+      aq deploy --dry-run    # Preview what would happen
 
-    Examples:
+    Sub-commands:
       aq deploy dockerfile
       aq deploy compose --monitoring
       aq deploy kubernetes
@@ -113,6 +303,439 @@ def deploy_gen_group(ctx, force: bool, dry_run: bool):
     ctx.ensure_object(dict)
     ctx.obj["force"] = force
     ctx.obj["dry_run"] = dry_run
+
+    # If a sub-command was given, delegate to it
+    if ctx.invoked_subcommand is not None:
+        return
+
+    # ── Interactive deploy wizard ────────────────────────────────────
+    _interactive_deploy(ctx, force=force, dry_run=dry_run, yes=yes)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Interactive deploy wizard
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _interactive_deploy(
+    ctx: click.Context,
+    *,
+    force: bool,
+    dry_run: bool,
+    yes: bool,
+) -> None:
+    """Full interactive deployment wizard.
+
+    Steps:
+      1. Introspect workspace
+      2. Select artefacts to generate
+      3. Configure options (CI provider, monitoring, dev mode, …)
+      4. Review & confirm
+      5. Generate files
+      6. Optionally execute deployment
+    """
+    from ..generators.deployment import (
+        DockerfileGenerator,
+        ComposeGenerator,
+        KubernetesGenerator,
+        NginxGenerator,
+        CIGenerator,
+        PrometheusGenerator,
+        GrafanaGenerator,
+        EnvGenerator,
+        MakefileGenerator,
+    )
+
+    workspace_root = Path.cwd()
+    verbose = ctx.obj.get("verbose", False)
+    interactive = not yes and sys.stdin.isatty()
+    written = 0
+
+    # ── 1. Introspect workspace ──────────────────────────────────────
+    try:
+        wctx = _get_ctx(workspace_root)
+    except Exception as e:
+        error(f"  {_CROSS} Workspace introspection failed: {e}")
+        sys.exit(1)
+
+    name = wctx["name"]
+
+    if interactive:
+        flow_header(
+            "aquilia deploy",
+            "Generate & execute production deployment for your workspace.",
+        )
+
+        # Show detected workspace info
+        section("Workspace detected")
+        kv("Name", name)
+        kv("Modules", str(wctx.get("module_count", 0)))
+        kv("DB driver", wctx.get("db_driver", "none"))
+        kv("Python", wctx.get("python_version", "3.12"))
+        kv("Cache", "yes" if wctx.get("has_cache") else "no")
+        kv("WebSockets", "yes" if wctx.get("has_websockets") else "no")
+        kv("MLOps", "yes" if wctx.get("has_mlops") else "no")
+        click.echo()
+
+        # ── 2. Select artefacts ──────────────────────────────────────
+        artefacts = multi_select("Artefacts to generate", [
+            ("dockerfile",  "Dockerfile (prod + dev + mlops)",     True),
+            ("compose",     "docker-compose.yml (full stack)",     True),
+            ("kubernetes",  "Kubernetes manifests (k8s/)",         False),
+            ("nginx",       "Nginx reverse-proxy config",          False),
+            ("ci",          "CI/CD pipeline (GitHub/GitLab)",      True),
+            ("monitoring",  "Prometheus + Grafana provisioning",   True),
+            ("env",         ".env.example template",               True),
+            ("makefile",    "Makefile (dev/build/deploy targets)", True),
+        ])
+
+        if not artefacts:
+            info("  No artefacts selected -- nothing to do.")
+            return
+
+        # ── 3. Configure options ─────────────────────────────────────
+
+        # CI provider (only if ci selected)
+        ci_provider = "github"
+        if "ci" in artefacts:
+            ci_provider = select("CI/CD provider", [
+                ("github", "GitHub Actions"),
+                ("gitlab", "GitLab CI/CD"),
+                ("both",   "Both providers"),
+            ], default=0)
+
+        # Dev mode dockerfiles
+        include_dev = False
+        if "dockerfile" in artefacts:
+            include_dev = confirm("Generate dev Dockerfile? (hot-reload)", default=True)
+
+        # Monitoring in compose
+        include_monitoring = "monitoring" in artefacts
+        if "compose" in artefacts and not include_monitoring:
+            include_monitoring = confirm(
+                "Include monitoring services in Compose?", default=False
+            )
+
+        # Output directory
+        output_dir = ask(
+            "Output directory",
+            default=".",
+            hint="relative to workspace root",
+        )
+
+        # ── 4. Execution options ─────────────────────────────────────
+        section("Execution")
+
+        exec_actions = multi_select("After generating, execute", [
+            ("docker-build",   "Build Docker image",                     "dockerfile" in artefacts),
+            ("compose-up",     "Start Docker Compose stack",             "compose" in artefacts),
+            ("k8s-apply",      "Apply Kubernetes manifests (kubectl)",   "kubernetes" in artefacts),
+            ("monitoring-up",  "Start monitoring (Prometheus+Grafana)",  include_monitoring),
+            ("compose-audit",  "Audit running services (docker ps)",     "compose" in artefacts),
+        ])
+
+        # ── 5. Review & confirm ─────────────────────────────────────
+        recap([
+            ("Workspace",    name),
+            ("Artefacts",    ", ".join(artefacts)),
+            ("CI provider",  ci_provider if "ci" in artefacts else "—"),
+            ("Dev Dockerfile", "yes" if include_dev else "no"),
+            ("Monitoring",   "yes" if include_monitoring else "no"),
+            ("Output",       output_dir),
+            ("Execute",      ", ".join(exec_actions) if exec_actions else "none"),
+            ("Force",        "yes" if force else "no"),
+            ("Dry run",      "yes" if dry_run else "no"),
+        ], title="Deploy configuration")
+
+        if not confirm("Proceed with deployment?", default=True):
+            click.echo()
+            info("  Cancelled.")
+            return
+
+    else:
+        # ── Non-interactive defaults ─────────────────────────────────
+        artefacts = [
+            "dockerfile", "compose", "kubernetes", "nginx",
+            "ci", "monitoring", "env", "makefile",
+        ]
+        ci_provider = "github"
+        include_dev = True
+        include_monitoring = True
+        output_dir = "."
+        exec_actions = ["docker-build", "compose-up", "compose-audit"]
+
+    # ── 6. Generate files ────────────────────────────────────────────
+    out = Path(output_dir)
+
+    click.echo()
+    banner(f"Deploy: {name}", subtitle="DRY RUN" if dry_run else "Generating deployment suite")
+    click.echo()
+
+    # -- Dockerfiles --
+    if "dockerfile" in artefacts:
+        section("Docker")
+        docker_gen = DockerfileGenerator(wctx)
+        if _write_file(out / "Dockerfile", docker_gen.generate_dockerfile(),
+                       label="Dockerfile (production)", verbose=verbose,
+                       force=force, dry_run=dry_run):
+            written += 1
+        if _write_file(out / ".dockerignore", docker_gen.generate_dockerignore(),
+                       label=".dockerignore", verbose=verbose,
+                       force=force, dry_run=dry_run):
+            written += 1
+        if include_dev:
+            if _write_file(out / "Dockerfile.dev", docker_gen.generate_dockerfile_dev(),
+                           label="Dockerfile.dev (development)", verbose=verbose,
+                           force=force, dry_run=dry_run):
+                written += 1
+        if wctx.get("has_mlops"):
+            if _write_file(out / "Dockerfile.mlops", docker_gen.generate_dockerfile_mlops(),
+                           label="Dockerfile.mlops (model-serving)", verbose=verbose,
+                           force=force, dry_run=dry_run):
+                written += 1
+        click.echo()
+
+    # -- Compose --
+    if "compose" in artefacts:
+        section("Docker Compose")
+        compose_gen = ComposeGenerator(wctx)
+        if _write_file(out / "docker-compose.yml",
+                       compose_gen.generate_compose(include_monitoring=include_monitoring),
+                       label="docker-compose.yml", verbose=verbose,
+                       force=force, dry_run=dry_run):
+            written += 1
+        if include_dev:
+            if _write_file(out / "docker-compose.dev.yml",
+                           compose_gen.generate_compose_dev(),
+                           label="docker-compose.dev.yml (dev override)", verbose=verbose,
+                           force=force, dry_run=dry_run):
+                written += 1
+        click.echo()
+
+    # -- Kubernetes --
+    if "kubernetes" in artefacts:
+        section("Kubernetes")
+        k8s_gen = KubernetesGenerator(wctx)
+        manifests = k8s_gen.generate_all()
+        for filename, content in manifests.items():
+            if _write_file(out / "k8s" / filename, content,
+                           label=f"k8s/{filename}", verbose=verbose,
+                           force=force, dry_run=dry_run):
+                written += 1
+
+        kustomize_resources = "\n".join(f"  - {f}" for f in sorted(manifests.keys()))
+        kustomize_content = (
+            f"apiVersion: kustomize.config.k8s.io/v1beta1\n"
+            f"kind: Kustomization\n"
+            f"namespace: {name}\n\n"
+            f"labels:\n"
+            f"  - pairs:\n"
+            f"      app.kubernetes.io/name: {name}\n"
+            f"      app.kubernetes.io/managed-by: aquilia-cli\n\n"
+            f"resources:\n{kustomize_resources}\n"
+        )
+        if _write_file(out / "k8s" / "kustomization.yaml",
+                       kustomize_content,
+                       label="k8s/kustomization.yaml", verbose=verbose,
+                       force=force, dry_run=dry_run):
+            written += 1
+        click.echo()
+
+    # -- Nginx --
+    if "nginx" in artefacts:
+        section("Nginx")
+        nginx_gen = NginxGenerator(wctx)
+        if _write_file(out / "deploy" / "nginx" / "nginx.conf",
+                       nginx_gen.generate_nginx_conf(),
+                       label="deploy/nginx/nginx.conf", verbose=verbose,
+                       force=force, dry_run=dry_run):
+            written += 1
+        if not dry_run:
+            (out / "deploy" / "nginx" / "ssl").mkdir(parents=True, exist_ok=True)
+        if _write_file(out / "deploy" / "nginx" / "ssl" / ".gitkeep", "",
+                       label="deploy/nginx/ssl/.gitkeep", verbose=verbose,
+                       force=force, dry_run=dry_run):
+            written += 1
+        click.echo()
+
+    # -- CI/CD --
+    if "ci" in artefacts:
+        section("CI/CD")
+        ci_gen = CIGenerator(wctx)
+        if ci_provider in ("github", "both"):
+            if _write_file(out / ".github" / "workflows" / "ci.yml",
+                           ci_gen.generate_github_actions(),
+                           label=".github/workflows/ci.yml", verbose=verbose,
+                           force=force, dry_run=dry_run):
+                written += 1
+        if ci_provider in ("gitlab", "both"):
+            if _write_file(out / ".gitlab-ci.yml",
+                           ci_gen.generate_gitlab_ci(),
+                           label=".gitlab-ci.yml", verbose=verbose,
+                           force=force, dry_run=dry_run):
+                written += 1
+        click.echo()
+
+    # -- Monitoring --
+    if "monitoring" in artefacts:
+        section("Monitoring")
+        prom_gen = PrometheusGenerator(wctx)
+        if _write_file(out / "deploy" / "prometheus" / "prometheus.yml",
+                       prom_gen.generate_prometheus_yml(),
+                       label="deploy/prometheus/prometheus.yml", verbose=verbose,
+                       force=force, dry_run=dry_run):
+            written += 1
+        graf_gen = GrafanaGenerator(wctx)
+        if _write_file(out / "deploy" / "grafana" / "provisioning" / "datasources" / "datasource.yml",
+                       graf_gen.generate_datasource(),
+                       label="deploy/grafana/.../datasource.yml", verbose=verbose,
+                       force=force, dry_run=dry_run):
+            written += 1
+        if _write_file(out / "deploy" / "grafana" / "provisioning" / "dashboards" / "dashboards.yml",
+                       graf_gen.generate_dashboard_provisioning(),
+                       label="deploy/grafana/.../dashboards.yml", verbose=verbose,
+                       force=force, dry_run=dry_run):
+            written += 1
+        click.echo()
+
+    # -- Env --
+    if "env" in artefacts:
+        section("Environment")
+        env_gen = EnvGenerator(wctx)
+        if _write_file(out / ".env.example", env_gen.generate_env_example(),
+                       label=".env.example", verbose=verbose,
+                       force=force, dry_run=dry_run):
+            written += 1
+        click.echo()
+
+    # -- Makefile --
+    if "makefile" in artefacts:
+        section("Makefile")
+        mk_gen = MakefileGenerator(wctx)
+        if _write_file(out / "Makefile", mk_gen.generate_makefile(),
+                       label="Makefile", verbose=verbose,
+                       force=force, dry_run=dry_run):
+            written += 1
+        click.echo()
+
+    # -- Generation summary --
+    rule()
+    click.echo()
+    if dry_run:
+        info(f"  {written} file(s) would be generated")
+    else:
+        success(f"  {_CHECK} {written} file(s) generated for '{name}'")
+    click.echo()
+
+    # ── 7. Execute deployment ────────────────────────────────────────
+    if exec_actions and not dry_run:
+        rule()
+        banner(f"Execute: {name}", subtitle="Running deployment actions")
+        click.echo()
+
+        exec_ok = 0
+        exec_fail = 0
+        exec_skip = 0
+
+        if "docker-build" in exec_actions:
+            section("Docker Build")
+            if not _has_command("docker"):
+                warning("  Docker not found on PATH -- skipping build")
+                exec_fail += 1
+            elif _exec_docker_build(workspace_root, wctx, dry_run=dry_run):
+                exec_ok += 1
+            else:
+                exec_fail += 1
+            click.echo()
+
+        if "compose-up" in exec_actions:
+            section("Docker Compose Up")
+            if not _has_command("docker"):
+                warning("  Docker not found on PATH -- skipping compose")
+                exec_fail += 1
+            elif _exec_compose_up(
+                workspace_root,
+                monitoring=include_monitoring and "monitoring-up" in exec_actions,
+                dry_run=dry_run,
+            ):
+                exec_ok += 1
+            else:
+                exec_fail += 1
+            click.echo()
+
+        if "k8s-apply" in exec_actions:
+            section("Kubernetes Apply")
+            k8s_result = _exec_k8s_apply(workspace_root, namespace=name, dry_run=dry_run)
+            if k8s_result is True:
+                exec_ok += 1
+            elif k8s_result is None:
+                exec_skip += 1   # no cluster -- not a failure
+            else:
+                exec_fail += 1
+            click.echo()
+
+        if "monitoring-up" in exec_actions and "compose-up" not in exec_actions:
+            # Only start monitoring separately if compose-up didn't already
+            section("Monitoring Stack")
+            if not _has_command("docker"):
+                warning("  Docker not found on PATH -- skipping monitoring")
+                exec_fail += 1
+            elif _exec_monitoring_up(workspace_root, dry_run=dry_run):
+                exec_ok += 1
+            else:
+                exec_fail += 1
+            click.echo()
+
+        if "compose-audit" in exec_actions:
+            section("Service Audit")
+            if _has_command("docker"):
+                _exec_compose_audit(workspace_root, dry_run=dry_run)
+                exec_ok += 1
+            else:
+                warning("  Docker not found on PATH -- skipping audit")
+                exec_fail += 1
+            click.echo()
+
+        # Execution summary
+        rule()
+        click.echo()
+        if exec_fail == 0:
+            success(f"  {_CHECK} All {exec_ok} action(s) completed successfully")
+        elif exec_ok == 0 and exec_fail == 0:
+            info(f"  {exec_skip} action(s) skipped (no cluster / tool unavailable)")
+        else:
+            parts = [f"{exec_ok} succeeded"]
+            if exec_skip:
+                parts.append(f"{exec_skip} skipped")
+            if exec_fail:
+                parts.append(f"{exec_fail} failed")
+            warning(f"  {', '.join(parts)}")
+        click.echo()
+
+    elif exec_actions and dry_run:
+        rule()
+        click.echo()
+        info(f"  [dry-run] {len(exec_actions)} action(s) would be executed:")
+        for action in exec_actions:
+            dim(f"    {_ARROW} {action}")
+        click.echo()
+
+    # ── 8. Next steps ────────────────────────────────────────────────
+    tips: list[str] = []
+    if "env" in artefacts:
+        tips.append("cp .env.example .env && edit .env")
+    if "compose" in artefacts and "compose-up" not in exec_actions:
+        tips.append("docker compose up -d")
+    if "kubernetes" in artefacts and "k8s-apply" not in exec_actions:
+        tips.append("kubectl apply -k k8s/")
+    if "makefile" in artefacts:
+        tips.append("make help")
+    if "monitoring" in artefacts:
+        tips.append("Open Grafana at http://localhost:3000 (admin/admin)")
+    if tips:
+        next_steps(tips)
+        click.echo()
+
+    flow_done("Deployment complete.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -312,8 +935,10 @@ def deploy_kubernetes(ctx, output: str, mlops: bool, force: bool, dry_run: bool)
             f"apiVersion: kustomize.config.k8s.io/v1beta1\n"
             f"kind: Kustomization\n\n"
             f"namespace: {wctx['name']}\n\n"
-            f"commonLabels:\n"
-            f"  app.kubernetes.io/managed-by: aquilia-cli\n\n"
+            f"labels:\n"
+            f"  - pairs:\n"
+            f"      app.kubernetes.io/name: {wctx['name']}\n"
+            f"      app.kubernetes.io/managed-by: aquilia-cli\n\n"
             f"resources:\n{kustomize_resources}\n"
         )
         _write_file(out / "kustomization.yaml", kustomize_content,
@@ -672,16 +1297,18 @@ def deploy_all(ctx, output: str, monitoring: bool, ci_provider: str, force: bool
                 written += 1
 
         kustomize_resources = "\n".join(f"  - {f}" for f in sorted(manifests.keys()))
-        common_labels = (
-            f"commonLabels:\n"
-            f"  app.kubernetes.io/name: {name}\n"
-            f"  app.kubernetes.io/managed-by: aquilia-cli\n"
+        kustomize_content = (
+            f"apiVersion: kustomize.config.k8s.io/v1beta1\n"
+            f"kind: Kustomization\n"
+            f"namespace: {name}\n\n"
+            f"labels:\n"
+            f"  - pairs:\n"
+            f"      app.kubernetes.io/name: {name}\n"
+            f"      app.kubernetes.io/managed-by: aquilia-cli\n\n"
+            f"resources:\n{kustomize_resources}\n"
         )
         if _write_file(out / "k8s" / "kustomization.yaml",
-                       f"apiVersion: kustomize.config.k8s.io/v1beta1\n"
-                       f"kind: Kustomization\nnamespace: {name}\n\n"
-                       f"{common_labels}\n"
-                       f"resources:\n{kustomize_resources}\n",
+                       kustomize_content,
                        label="k8s/kustomization.yaml", verbose=verbose,
                        force=force, dry_run=dry_run):
             written += 1
